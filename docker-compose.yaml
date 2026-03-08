@@ -82,7 +82,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+      MINIO_API_CORS_ALLOW_ORIGIN: "https://iamazim.com,https://fazle.iamazim.com"
     logging:
       driver: "json-file"
       options:
@@ -364,6 +364,9 @@ services:
     build: ./fazle-system/api
     container_name: fazle-api
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       FAZLE_API_KEY: "${FAZLE_API_KEY:-}"
       FAZLE_BRAIN_URL: "http://fazle-brain:8200"
@@ -403,6 +406,9 @@ services:
     build: ./fazle-system/brain
     container_name: fazle-brain
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OLLAMA_URL: "http://ollama:11434"
@@ -444,6 +450,9 @@ services:
     build: ./fazle-system/memory
     container_name: fazle-memory
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       VECTOR_DB_URL: "http://qdrant:6333"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
@@ -479,6 +488,9 @@ services:
     build: ./fazle-system/tasks
     container_name: fazle-task-engine
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       FAZLE_BRAIN_URL: "http://fazle-brain:8200"
       FAZLE_MEMORY_URL: "http://fazle-memory:8300"
@@ -510,6 +522,9 @@ services:
     build: ./fazle-system/tools
     container_name: fazle-web-intelligence
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       SERPER_API_KEY: "${SERPER_API_KEY:-}"
       TAVILY_API_KEY: "${TAVILY_API_KEY:-}"
@@ -541,6 +556,9 @@ services:
     build: ./fazle-system/trainer
     container_name: fazle-trainer
     restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OLLAMA_URL: "http://ollama:11434"
@@ -705,7 +723,11 @@ services:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
     restart: always
-    privileged: true
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

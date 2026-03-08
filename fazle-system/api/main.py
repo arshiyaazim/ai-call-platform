@@ -46,7 +46,9 @@ app.add_middleware(
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
-    if settings.fazle_api_key and x_api_key != settings.fazle_api_key:
+    if not settings.fazle_api_key or settings.fazle_api_key == "":
+        raise HTTPException(status_code=500, detail="FAZLE_API_KEY not configured")
+    if x_api_key != settings.fazle_api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
