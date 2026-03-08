@@ -7,6 +7,9 @@ New VPS Password.txt
 # Local validation workspace
 local-validation/
 
+# Deployment artifacts (contains secrets)
+deployment-package/
+
 # Project files
 Project developmenmt.docx
 
