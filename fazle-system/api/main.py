@@ -233,10 +233,10 @@ async def voice_token(auth_user: dict = Depends(verify_auth)):
     room_name = f"fazle-voice-{user_id}"
 
     token = AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
-    token.identity = user_id
-    token.name = user_name
-    token.metadata = relationship
-    token.add_grant(VideoGrants(
+    token.with_identity(user_id)
+    token.with_name(user_name)
+    token.with_metadata(relationship)
+    token.with_grants(VideoGrants(
         room_join=True,
         room=room_name,
         can_publish=True,
