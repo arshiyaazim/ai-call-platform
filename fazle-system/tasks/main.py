@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from prometheus_fastapi_instrumentator import Instrumentator
+import asyncio
 import httpx
 import json
 import logging
@@ -76,7 +77,10 @@ app.add_middleware(
 )
 
 jobstores = {"default": SQLAlchemyJobStore(engine=engine)}
-scheduler = AsyncIOScheduler(jobstores=jobstores)
+scheduler = AsyncIOScheduler(
+    jobstores=jobstores,
+    job_defaults={"misfire_grace_time": 300, "coalesce": True},
+)
 
 TASK_TYPES = {"reminder", "call", "summary", "instruction", "custom"}
 
@@ -277,18 +281,24 @@ async def delete_task(task_id: str):
 
 
 # ── Task execution ─────────────────────────────────────────
-async def _execute_task(task_id: str):
-    """Execute a scheduled task."""
+def _get_task_row(task_id: str):
+    """Fetch a task row from DB (sync — called via asyncio.to_thread)."""
     with engine.connect() as conn:
-        row = conn.execute(
+        return conn.execute(
             text("SELECT id, title, description, task_type, status, scheduled_at, created_at, payload FROM fazle_tasks WHERE id = :id"),
             {"id": task_id},
         ).mappings().first()
+
+
+async def _execute_task(task_id: str):
+    """Execute a scheduled task (offloads sync DB calls to thread pool)."""
+    row = await asyncio.to_thread(_get_task_row, task_id)
     if not row:
+        logger.warning(f"Task {task_id} not found in database, skipping execution")
         return
 
     task = _row_to_dict(row)
-    _update_task_status(task_id, "executing")
+    await asyncio.to_thread(_update_task_status, task_id, "executing")
     logger.info(f"Executing task: {task['title']} ({task['task_type']})")
 
     try:
@@ -299,14 +309,15 @@ async def _execute_task(task_id: str):
         elif task["task_type"] == "summary":
             await _handle_summary(task)
 
-        _update_task_status(task_id, "completed")
+        await asyncio.to_thread(_update_task_status, task_id, "completed")
+        logger.info(f"Task {task_id} completed successfully")
     except Exception as e:
-        logger.error(f"Task execution failed: {e}")
-        _update_task_status(task_id, "failed")
+        logger.error(f"Task {task_id} execution failed: {e}", exc_info=True)
+        await asyncio.to_thread(_update_task_status, task_id, "failed")
 
 
 def _update_task_status(task_id: str, status: str):
-    """Update task status in the database."""
+    """Update task status in the database (sync — called via asyncio.to_thread)."""
     with engine.connect() as conn:
         conn.execute(text("UPDATE fazle_tasks SET status = :status WHERE id = :id"), {"id": task_id, "status": status})
         conn.commit()

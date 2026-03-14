@@ -1,0 +1,225 @@
+# ============================================================
+# Dograh Voice Agent Stack
+# Pre-built Dograh API + UI, LiveKit, Coturn, Cloudflared
+# ============================================================
+# DEPLOY ORDER: 2 (start AFTER ai-infra)
+# ENV FILE:     Symlink ../.env into this directory or use:
+#               docker compose --env-file ../.env up -d
+# ============================================================
+# DO NOT MODIFY dograhai/dograh-api or dograhai/dograh-ui images
+# ============================================================
+
+services:
+  # ── LiveKit — Real-time WebRTC Audio Streaming ───────────
+  livekit:
+    image: livekit/livekit-server:v1.8.2
+    container_name: livekit
+    restart: always
+    entrypoint: ["/bin/sh", "/etc/livekit-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../configs/livekit/livekit.yaml:/etc/livekit-template.yaml:ro
+      - ../scripts/livekit-entrypoint.sh:/etc/livekit-entrypoint.sh:ro
+    environment:
+      VPS_IP: ${VPS_IP:-5.189.131.48}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY not set}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}
+      LIVEKIT_WEBHOOK_URL: ${LIVEKIT_WEBHOOK_URL:-http://api:8000/api/v1/livekit/webhook}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          memory: 256M
+    ports:
+      - "127.0.0.1:7880:7880"        # HTTP API (proxied by Nginx)
+      - "7881:7881"                    # RTC over TCP (direct)
+      - "50000-50200:50000-50200/udp"  # WebRTC UDP media
+    # NOTE: redis dependency removed (cross-compose).
+    # LiveKit will retry redis connection on startup.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7880 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      app-network:
+        aliases:
+          - livekit
+      db-network:
+        aliases:
+          - livekit
+
+  # ── Coturn — TURN/STUN for NAT Traversal ─────────────────
+  coturn:
+    image: coturn/coturn:4.6.2-r12-alpine
+    container_name: coturn
+    restart: always
+    entrypoint: ["/bin/sh", "/etc/coturn-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../configs/coturn/turnserver.conf:/etc/coturn/turnserver-template.conf:ro
+      - ../scripts/coturn-entrypoint.sh:/etc/coturn-entrypoint.sh:ro
+      - /etc/letsencrypt/live/iamazim.com/fullchain.pem:/etc/coturn/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/iamazim.com/privkey.pem:/etc/coturn/certs/privkey.pem:ro
+    user: root
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ports:
+      - "3478:3478"          # STUN/TURN UDP
+      - "3478:3478/udp"      # STUN/TURN UDP
+      - "5349:5349"          # TURN TLS
+      - "5349:5349/udp"      # TURN TLS UDP
+      - "49152-49252:49152-49252/udp"  # Relay ports
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -tlnp | grep -q ':3478'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - app-network
+
+  # ── Dograh API — FastAPI Backend (DO NOT MODIFY) ───────────
+  api:
+    image: ${REGISTRY:-dograhai}/dograh-api:${DOGRAH_API_VERSION:-1.0.0}
+    container_name: dograh-api
+    restart: always
+    volumes:
+      - shared-tmp:/tmp
+      - ../personality:/app/personality:ro
+    environment:
+      ENVIRONMENT: "production"
+      LOG_LEVEL: "INFO"
+      BACKEND_API_ENDPOINT: "${BACKEND_API_ENDPOINT:-https://iamazim.com}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}@postgres:5432/${POSTGRES_DB:-postgres}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379"
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY not set}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY not set}"
+      MINIO_BUCKET: "voice-audio"
+      MINIO_SECURE: "false"
+      FASTAPI_WORKERS: 2
+      ENABLE_TRACING: "false"
+      # TURN / LiveKit
+      TURN_HOST: "${TURN_HOST:-turn.iamazim.com}"
+      TURN_SECRET: "${TURN_SECRET:?TURN_SECRET not set}"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY not set}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}"
+      LIVEKIT_WS_URL: "wss://livekit.iamazim.com"
+      OSS_JWT_SECRET: "${OSS_JWT_SECRET:?OSS_JWT_SECRET not set}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      livekit:
+        condition: service_healthy
+      # NOTE: postgres, redis, minio dependencies removed (cross-compose).
+      # Dograh API retries DB/Redis connections internally.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      app-network:
+        aliases:
+          - api
+      db-network:
+        aliases:
+          - api
+
+  # ── Dograh UI — Next.js Dashboard (DO NOT MODIFY) ────────
+  ui:
+    image: ${REGISTRY:-dograhai}/dograh-ui:${DOGRAH_UI_VERSION:-1.0.0}
+    container_name: dograh-ui
+    restart: always
+    entrypoint: ["/bin/sh", "/app/scripts/ui-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../scripts/ui-entrypoint.sh:/app/scripts/ui-entrypoint.sh:ro
+    environment:
+      HOSTNAME: "0.0.0.0"
+      BACKEND_URL: "${BACKEND_URL:-http://api:8000}"
+      BACKEND_API_ENDPOINT: "${BACKEND_API_ENDPOINT:-https://api.iamazim.com}"
+      NODE_ENV: "oss"
+      ENABLE_TELEMETRY: "false"
+      PORT: "3010"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:3010:3010"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3010 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - app-network
+
+  # ── Cloudflare Tunnel (optional fallback) ─────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.1
+    container_name: cloudflared-tunnel
+    restart: always
+    command: tunnel --no-autoupdate --url http://api:8000 --metrics 0.0.0.0:2000
+    healthcheck:
+      test: ["NONE"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    networks:
+      - app-network
+
+# ── Volumes ──────────────────────────────────────────────────
+volumes:
+  shared-tmp:
+    name: shared-tmp
+    driver: local
+
+# ── Networks (all external — shared across stacks) ──────────
+networks:
+  app-network:
+    external: true
+  db-network:
+    external: true

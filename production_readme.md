@@ -1,6 +1,7 @@
 # ============================================================
 # Production Deployment Guide — AI Voice Agent SaaS Platform
 # Domain: iamazim.com | VPS: 5.189.131.48
+# Updated: 2026-03-15 (Post Phase 4+5 Deployment)
 # ============================================================
 
 ## Architecture Overview
@@ -36,19 +37,29 @@ Internet (Caller / Browser)
     │
     │  POST /fazle/decision
     ▼
-┌──────────────────────────────────────────┐
-│  Fazle Personal AI System                │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │ API GW   │ │ Brain    │ │ Memory   │  │
-│  │ :8100    │ │ :8200    │ │ :8300    │  │
-│  ├──────────┤ ├──────────┤ ├──────────┤  │
-│  │ Tasks    │ │ Web Intel│ │ Trainer  │  │
-│  │ :8400    │ │ :8500    │ │ :8600    │  │
-│  ├──────────┤ ├──────────┤ ├──────────┤  │
-│  │ Fazle UI │ │ Qdrant   │ │ Ollama   │  │
-│  │ :3020    │ │ :6333    │ │ :11434   │  │
-│  └──────────┘ └──────────┘ └──────────┘  │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Fazle Personal AI System                        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐          │
+│  │ API GW   │ │ Brain    │ │ Memory   │          │
+│  │ :8100    │ │ :8200    │ │ :8300    │          │
+│  ├──────────┤ ├──────────┤ ├──────────┤          │
+│  │ Tasks    │ │ Web Intel│ │ Trainer  │          │
+│  │ :8400    │ │ :8500    │ │ :8600    │          │
+│  ├──────────┤ ├──────────┤ ├──────────┤          │
+│  │ Voice    │ │ Fazle UI │ │ Qdrant   │          │
+│  │ :8700    │ │ :3020    │ │ :6333    │          │
+│  ├──────────┴─┴──────────┴─┴──────────┤          │
+│  │  ★ Phase 4+5 — AI Enhancement Layer│          │
+│  ├──────────┐ ┌──────────┐ ┌──────────┤          │
+│  │LLM GW   │ │ Queue    │ │ Learning │          │
+│  │:8800     │ │ :8810    │ │ Engine   │          │
+│  │cache,rate│ │async req │ │ :8900    │          │
+│  │batch,fall│ │Redis Stm │ │self-learn│          │
+│  ├──────────┤ ├──────────┤ └──────────┤          │
+│  │Workers×2 │ │ Ollama   │                       │
+│  │:8820     │ │ :11434   │                       │
+│  └──────────┘ └──────────┘                       │
+└──────────────────────────────────────────────────┘
     │
 ┌───┴──────────────────┐
 │   Internal Services  │
@@ -56,6 +67,30 @@ Internet (Caller / Browser)
 │PostgreSQL│   Redis   │
 │(pgvector)│   MinIO   │
 └──────────┴───────────┘
+```
+
+## LLM Request Flow (Phase 4+5)
+
+```
+User Request → Fazle API → Brain Service
+                              │
+                    ┌─────────▼──────────┐
+                    │  LLM Gateway :8800 │
+                    │  ├─ Cache Check     │
+                    │  ├─ Rate Limit      │
+                    │  ├─ Request Batch   │
+                    │  └─ Model Routing   │
+                    └────────┬───────────┘
+                    ┌────────┼────────┐
+                    │                 │
+                ┌───▼────┐     ┌─────▼───────┐
+                │ OpenAI │     │   Ollama    │
+                │ gpt-4o │     │ qwen2.5:3b  │
+                └────────┘     └─────────────┘
+
+Async Path:  Client → Queue :8810 → Redis Streams (DB 5)
+                                         │
+                              Workers ×2 :8820 → LLM Gateway
 ```
 
 ## Real-Time Call Flow
@@ -68,7 +103,7 @@ Phone Call → Twilio → Dograh API → LiveKit (audio stream)
                                    └───┬───┘
                                        │
                                    ┌───┴───┐
-                                   │  LLM  │ (AI Processing)
+                                   │  LLM  │ (via Brain → LLM Gateway)
                                    └───┬───┘
                                        │
                                    ┌───┴───┐
@@ -78,7 +113,7 @@ Phone Call → Twilio → Dograh API → LiveKit (audio stream)
                                 Voice response → back to caller
 ```
 
-## Services
+## Services (30 defined, 29 containers)
 
 | Service    | Container     | Internal Port | Exposed                  |
 |------------|---------------|---------------|--------------------------|
@@ -97,7 +132,12 @@ Phone Call → Twilio → Dograh API → LiveKit (audio stream)
 | Fazle Tasks| fazle-task-engine | 8400      | Internal only            |
 | Fazle WebIntel| fazle-web-intelligence | 8500 | Internal only         |
 | Fazle Trainer| fazle-trainer | 8600        | Internal only            |
+| Fazle Voice| fazle-voice   | 8700          | Internal only            |
 | Fazle UI   | fazle-ui      | 3020          | 127.0.0.1:3020 → Nginx  |
+| **LLM Gateway** | fazle-llm-gateway | **8800** | Internal only       |
+| **Learning Engine** | fazle-learning-engine | **8900** | Internal only |
+| **Queue**  | fazle-queue   | **8810**      | Internal only            |
+| **Workers ×2** | — (replicated) | **8820** | Internal only            |
 | Qdrant     | qdrant        | 6333          | Internal only            |
 | Ollama     | ollama        | 11434         | Internal only            |
 | Prometheus | prometheus    | 9090          | Internal only            |
@@ -120,6 +160,35 @@ Phone Call → Twilio → Dograh API → LiveKit (audio stream)
 | Fazle API      | https://fazle.iamazim.com/api/fazle/   |
 | Fazle API Docs | https://fazle.iamazim.com/docs         |
 | Grafana        | https://iamazim.com/grafana/           |
+
+## VPS System Info
+
+| Metric | Value |
+|--------|-------|
+| Provider | Contabo |
+| IP | 5.189.131.48 |
+| User | azim |
+| OS | Ubuntu Linux 5.15.0-171-generic |
+| CPUs | 4 × AMD EPYC |
+| RAM | 7.8 GB |
+| Disk | 73 GB (46% used after cleanup) |
+| Docker | v29.2.1 |
+| Docker Compose | v5.1.0 |
+| Containers | 29 running (27 healthy + promtail + cloudflared) |
+| Docker images | 28 (26.4 GB) |
+
+## LLM Configuration
+
+| Setting | Value |
+|---------|-------|
+| Primary provider | OpenAI (gpt-4o) |
+| Fallback provider | Ollama (qwen2.5:3b — 1.9GB, 3.1B params) |
+| LLM Gateway cache TTL | 300s |
+| Rate limit | 10 req/s per user |
+| Batch window | 75ms (max batch size: 4) |
+| Brain routing | Via LLM Gateway (`USE_LLM_GATEWAY=true`) |
+| Trainer routing | Via LLM Gateway (`USE_LLM_GATEWAY=true`) |
+| Direct fallback | Set `USE_LLM_GATEWAY=false` to bypass gateway |
 
 ---
 
@@ -286,20 +355,37 @@ certbot certificates
 │ app-network (bridge)                                 │
 │   Nginx → Dograh API, Dograh UI, Fazle API, Fazle UI│
 │   LiveKit, Coturn, Cloudflared, Task Engine          │
+│   Fazle Brain, Memory, Web Intel, Trainer, Voice     │
+│   LLM Gateway                                       │
 ├──────────────────────────────────────────────────────┤
 │ db-network (internal)                                │
 │   PostgreSQL, Redis, MinIO, Qdrant                   │
-│   Dograh API, LiveKit, Fazle Brain, Fazle Memory     │
+│   Dograh API, LiveKit, Fazle API, Brain, Memory      │
+│   Fazle Tasks, LLM Gateway, Learning Engine          │
+│   Queue, Workers                                     │
 ├──────────────────────────────────────────────────────┤
 │ ai-network (internal)                                │
 │   Ollama, Fazle Brain, Fazle Memory, Fazle API       │
 │   Fazle Tasks, Fazle Web Intel, Fazle Trainer        │
+│   Fazle Voice, LLM Gateway, Learning Engine          │
+│   Queue, Workers                                     │
 ├──────────────────────────────────────────────────────┤
 │ monitoring-network (internal)                        │
 │   Prometheus, Grafana, Node Exporter, cAdvisor       │
 │   Loki, Promtail                                     │
 └──────────────────────────────────────────────────────┘
 ```
+
+## Redis Database Allocation
+
+| DB | Service | Purpose |
+|----|---------|---------|
+| 0 | Default (Dograh, LiveKit) | Session data, coordination |
+| 1 | Fazle Brain | Conversation cache (24h TTL) |
+| 2 | Fazle Trainer | Training session tracking |
+| 3 | LLM Gateway | Response cache (300s TTL), rate limits (10 req/s), usage stats |
+| 4 | Learning Engine | Relationship graph, user corrections |
+| 5 | Queue + Workers | Redis Streams for async LLM requests |
 
 ## Resource Limits
 
@@ -318,16 +404,31 @@ certbot certificates
 | Fazle Tasks      | 0.5  | 512 MB | 128 MB   |
 | Fazle Web Intel  | 0.5  | 512 MB | 128 MB   |
 | Fazle Trainer    | 1    | 512 MB | 128 MB   |
+| Fazle Voice      | 1    | 512 MB | 128 MB   |
 | Fazle UI         | 0.5  | 256 MB | 128 MB   |
+| **LLM Gateway**  | 1    | 1 GB   | 256 MB   |
+| **Learning Engine**| 0.5 | 512 MB | 128 MB  |
+| **Queue**        | 0.5  | 512 MB | 128 MB   |
+| **Workers ×2**   | 1 ea | 1 GB ea| 256 MB ea|
 | Prometheus       | 0.5  | 512 MB | 256 MB   |
 | Grafana          | 0.5  | 256 MB | 128 MB   |
 | Loki             | 0.5  | 512 MB | 256 MB   |
+
+### Ollama Resource Protection
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| NUM_PARALLEL | 1 | Prevent RAM exhaustion on 7.8GB VPS |
+| MAX_LOADED_MODELS | 1 | Only load one model at a time |
+| MAX_QUEUE | 2 | Prevent request pile-up |
+| Memory limit | 6 GB | Hard ceiling |
+| Installed model | qwen2.5:3b (1.9GB) | Only model on VPS |
 
 ## File Structure
 
 ```
 /home/azim/ai-call-platform/
-├── docker-compose.yaml          # Main orchestration (all services)
+├── docker-compose.yaml          # Main orchestration (ALL 30 services)
 ├── .env                         # Secrets (never commit)
 ├── .env.example                 # Template
 ├── personality/
@@ -358,17 +459,29 @@ certbot certificates
 │   ├── backup.sh                # Full backup (Postgres+Qdrant+Redis+MinIO+configs)
 │   ├── health-check.sh          # Health monitoring
 │   ├── setup-ssl.sh             # SSL certificate setup
-│   └── setup-firewall.sh        # UFW firewall rules
+│   ├── setup-firewall.sh        # UFW firewall rules
+│   └── load-test.py             # Phase 4+5 load test script
 ├── fazle-system/                    # Fazle Personal AI System
 │   ├── api/                         # API gateway service
-│   ├── brain/                       # Reasoning engine
+│   ├── brain/                       # Reasoning engine (routes via LLM Gateway)
 │   ├── memory/                      # Vector memory (Qdrant)
 │   ├── tasks/                       # Task scheduler
 │   ├── tools/                       # Web intelligence + plugins
-│   ├── trainer/                     # Knowledge extraction
+│   ├── trainer/                     # Knowledge extraction (routes via LLM Gateway)
+│   ├── voice/                       # LiveKit voice agent
 │   ├── ui/                          # Next.js dashboard
+│   ├── llm-gateway/                 # ★ LLM routing, caching, rate limiting, batching
+│   ├── learning-engine/             # ★ Autonomous self-improvement
+│   ├── queue/                       # ★ Redis Streams async request queue
+│   ├── workers/                     # ★ LLM request worker pool (2 replicas)
 │   ├── .env.example                 # Fazle env template
 │   └── README.md                    # Fazle documentation
+├── ai-infra/                        # Three-stack layout (alternative)
+│   └── docker-compose.yaml          # Infrastructure + monitoring
+├── dograh/                          # Three-stack layout (alternative)
+│   └── dograh-docker-compose.yaml   # Dograh services
+├── fazle-ai/                        # Three-stack layout (alternative)
+│   └── fazle-docker-compose.yaml    # All Fazle services
 └── production_readme.md             # This file
 ```
 
@@ -382,7 +495,8 @@ certbot certificates
 - [x] LiveKit HTTP: bound to 127.0.0.1 (Nginx fronted)
 - [x] HTTPS enforced with HSTS
 - [x] Security headers on all domains
-- [x] Rate limiting on API endpoints
+- [x] Rate limiting on API endpoints (Nginx: 30r/s API, 20r/s Fazle)
+- [x] LLM Gateway rate limiting (10 req/s per user)
 - [x] TURN server uses shared-secret auth
 - [x] Log rotation on all containers
 - [x] Docker restart policies set
@@ -390,12 +504,16 @@ certbot certificates
 - [x] Fazle services: internal-only (no public ports except via Nginx)
 - [x] Fazle API: optional API key authentication
 - [x] Qdrant: no public port, isolated on `db-network`
-- [x] Ollama: no public port, isolated on `ai-network`
+- [x] Ollama: no public port, isolated on `ai-network`, concurrency-protected
 - [x] Network segmentation: db-network, ai-network, monitoring-network (all internal)
 - [x] Resource limits on all containers (prevents resource exhaustion)
 - [x] Grafana: IP-restricted access via Nginx
 - [x] Monitoring stack: isolated on internal network only
 - [x] Centralized logging with 14-day retention
+- [x] LLM Gateway: response caching, request batching, model fallback
+- [x] Async queue: Redis Streams with consumer groups for overflow handling
+- [x] Workers: replicated (×2) for horizontal scaling
+- [x] Read-only containers with tmpfs for all Fazle services
 
 ## Troubleshooting
 

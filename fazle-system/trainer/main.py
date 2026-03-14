@@ -10,6 +10,7 @@ import httpx
 import os
 import json
 import logging
+import re
 import uuid
 from typing import Optional
 from datetime import datetime
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1"
     memory_url: str = "http://fazle-memory:8300"
     redis_url: str = "redis://redis:6379/2"
+    llm_gateway_url: str = "http://fazle-llm-gateway:8800"
+    use_llm_gateway: bool = True
 
     class Config:
         env_prefix = ""
@@ -42,6 +45,27 @@ def _get_redis() -> redis.Redis:
     if _redis is None:
         _redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     return _redis
+
+
+# ── PII Redaction ───────────────────────────────────────────
+_PII_PATTERNS = [
+    # Email addresses
+    (re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'), '[EMAIL_REDACTED]'),
+    # US phone numbers: (xxx) xxx-xxxx, xxx-xxx-xxxx, +1xxxxxxxxxx, etc.
+    (re.compile(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'), '[PHONE_REDACTED]'),
+    # SSN: xxx-xx-xxxx
+    (re.compile(r'\b\d{3}-\d{2}-\d{4}\b'), '[SSN_REDACTED]'),
+    # Credit card numbers: 13-19 digit sequences with optional separators
+    (re.compile(r'\b(?:\d[-.\s]?){13,19}\b'), '[CARD_REDACTED]'),
+]
+
+
+def redact_pii(text: str) -> str:
+    """Strip or mask common PII patterns (email, phone, SSN, credit card) from text."""
+    for pattern, replacement in _PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 app = FastAPI(title="Fazle Trainer — Learning & Preference Extraction", version="1.0.0")
 
@@ -81,7 +105,25 @@ Respond in JSON with:
 
 
 async def query_llm(messages: list[dict]) -> dict:
-    """Call LLM for knowledge extraction."""
+    """Call LLM for knowledge extraction — gateway first, direct fallback."""
+    if settings.use_llm_gateway:
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{settings.llm_gateway_url}/generate",
+                    json={
+                        "messages": messages,
+                        "response_format": "json",
+                        "caller": "fazle-trainer",
+                        "temperature": 0.3,
+                    },
+                )
+                resp.raise_for_status()
+                return json.loads(resp.json()["content"])
+        except Exception as e:
+            logger.warning(f"LLM Gateway unavailable, falling back to direct: {e}")
+
+    # Direct fallback
     if settings.llm_provider == "ollama":
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
@@ -157,14 +199,20 @@ async def train(request: TrainRequest):
         for extraction in extractions:
             if extraction.get("confidence", 0) < 0.5:
                 continue
+            # Redact PII before storing
+            extraction_text = redact_pii(extraction.get("text", ""))
+            extraction_content = {
+                k: redact_pii(v) if isinstance(v, str) else v
+                for k, v in extraction.get("content", {}).items()
+            }
             try:
                 await client.post(
                     f"{settings.memory_url}/store",
                     json={
                         "type": extraction.get("type", "personal"),
                         "user": request.user,
-                        "content": extraction.get("content", {}),
-                        "text": extraction.get("text", ""),
+                        "content": extraction_content,
+                        "text": extraction_text,
                     },
                 )
                 stored_count += 1

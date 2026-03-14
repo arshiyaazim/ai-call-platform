@@ -136,23 +136,43 @@ class ScrapeRequest(BaseModel):
 
 
 def _is_private_ip(url: str) -> bool:
-    """Check if URL points to private/internal IP ranges (SSRF protection)."""
+    """Check if URL points to private/internal IP ranges (SSRF protection).
+
+    Resolves both IPv4 and IPv6 addresses via getaddrinfo to block:
+    127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+    169.254.0.0/16, ::1, fc00::/7, fe80::/10, and other reserved ranges.
+    """
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
         if not hostname:
             return True
-        # Resolve hostname to IP
+
+        # Fast reject known internal hostnames
+        if hostname in ('localhost', '0.0.0.0', '[::1]', '[::]'):
+            return True
+        if hostname.endswith('.internal') or hostname.endswith('.local'):
+            return True
+
+        # Resolve all addresses (IPv4 + IPv6) for the hostname
         try:
-            ip = ipaddress.ip_address(socket.gethostbyname(hostname))
-            return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-        except (socket.gaierror, ValueError):
-            # Block unresolvable or invalid hostnames
-            if hostname in ('localhost', '0.0.0.0', '[::1]', '[::]'):
+            addr_infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return True  # Block unresolvable hostnames
+
+        if not addr_infos:
+            return True
+
+        for addr_info in addr_infos:
+            raw_ip = addr_info[4][0]
+            try:
+                ip = ipaddress.ip_address(raw_ip)
+            except ValueError:
                 return True
-            if hostname.endswith('.internal') or hostname.endswith('.local'):
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
                 return True
-            return False
+
+        return False
     except Exception:
         return True  # Fail closed on any parsing error
 

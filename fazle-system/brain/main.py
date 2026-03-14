@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     memory_url: str = "http://fazle-memory:8300"
     tools_url: str = "http://fazle-web-intelligence:8500"
     task_url: str = "http://fazle-task-engine:8400"
+    llm_gateway_url: str = "http://fazle-llm-gateway:8800"
+    learning_engine_url: str = "http://fazle-learning-engine:8900"
+    use_llm_gateway: bool = True
 
     class Config:
         env_prefix = ""
@@ -80,7 +83,7 @@ Respond in JSON with these fields:
 
 
 async def query_openai(messages: list[dict]) -> dict:
-    """Call OpenAI API for reasoning."""
+    """Call OpenAI API for reasoning (direct, used as fallback)."""
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -101,7 +104,7 @@ async def query_openai(messages: list[dict]) -> dict:
 
 
 async def query_ollama(messages: list[dict]) -> dict:
-    """Call local Ollama LLM for reasoning."""
+    """Call local Ollama LLM for reasoning (direct, used as fallback)."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{settings.ollama_url}/api/chat",
@@ -117,8 +120,29 @@ async def query_ollama(messages: list[dict]) -> dict:
         return json.loads(data["message"]["content"])
 
 
+async def query_gateway(messages: list[dict]) -> dict:
+    """Call LLM Gateway for centralized routing, caching, and fallback."""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{settings.llm_gateway_url}/generate",
+            json={
+                "messages": messages,
+                "response_format": "json",
+                "caller": "fazle-brain",
+                "temperature": 0.7,
+            },
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["content"])
+
+
 async def query_llm(messages: list[dict]) -> dict:
-    """Route to configured LLM provider."""
+    """Route to LLM Gateway (preferred) or direct provider (fallback)."""
+    if settings.use_llm_gateway:
+        try:
+            return await query_gateway(messages)
+        except Exception as e:
+            logger.warning(f"LLM Gateway unavailable, falling back to direct: {e}")
     if settings.llm_provider == "ollama":
         return await query_ollama(messages)
     return await query_openai(messages)
@@ -362,6 +386,20 @@ async def chat(request: ChatRequest):
             )
         except Exception:
             pass
+
+    # Trigger async learning from this conversation
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as learn_client:
+            await learn_client.post(
+                f"{settings.learning_engine_url}/learn",
+                json={
+                    "transcript": f"{user_name}: {request.message}\nAzim: {reply}",
+                    "user": user_name,
+                    "conversation_id": conversation_id,
+                },
+            )
+    except Exception:
+        pass  # Non-critical — learning is best-effort
 
     return {
         "reply": reply,

@@ -1,0 +1,245 @@
+# ============================================================
+# Dograh Stack — iamazim.com
+# Fixes applied: credential externalization, port binding,
+#   YAML syntax, restart policies, logging, CORS, HTTPS URL
+# ============================================================
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DOGRAH_PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${DOGRAH_PG_PASSWORD:?Set DOGRAH_PG_PASSWORD in .env}
+      POSTGRES_DB: ${DOGRAH_PG_DB:-dograh}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: >
+      --requirepass ${DOGRAH_REDIS_PASSWORD:?Set DOGRAH_REDIS_PASSWORD in .env}
+    volumes:
+      - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${DOGRAH_REDIS_PASSWORD}", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    networks:
+      - app-network
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${DOGRAH_MINIO_USER:?Set DOGRAH_MINIO_USER in .env}
+      MINIO_ROOT_PASSWORD: ${DOGRAH_MINIO_PASSWORD:?Set DOGRAH_MINIO_PASSWORD in .env}
+      MINIO_API_CORS_ALLOW_ORIGIN: "https://iamazim.com"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_https
+    restart: unless-stopped
+    profiles: ["remote"]
+    depends_on:
+      - ui
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-network
+
+  api:
+    image: ${REGISTRY:-dograhai}/dograh-api:latest
+    restart: unless-stopped
+    volumes:
+      - shared-tmp:/tmp
+    environment:
+      ENVIRONMENT: "production"
+      LOG_LEVEL: "INFO"
+
+      BACKEND_API_ENDPOINT: "http://api:8000"
+
+      # Database — uses env vars from .env
+      DATABASE_URL: "postgresql+asyncpg://${DOGRAH_PG_USER:-postgres}:${DOGRAH_PG_PASSWORD}@postgres:5432/${DOGRAH_PG_DB:-dograh}"
+
+      # Redis — uses env vars from .env
+      REDIS_URL: "redis://:${DOGRAH_REDIS_PASSWORD}@redis:6379"
+
+      # MinIO — uses env vars from .env
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "${DOGRAH_MINIO_USER}"
+      MINIO_SECRET_KEY: "${DOGRAH_MINIO_PASSWORD}"
+      MINIO_BUCKET: "voice-audio"
+      MINIO_SECURE: "false"
+
+      FASTAPI_WORKERS: 1
+
+      # Tracing (disabled)
+      ENABLE_TRACING: "false"
+
+      # TURN server (remote profile)
+      TURN_HOST: "${TURN_HOST:-}"
+      TURN_SECRET: "${TURN_SECRET:-}"
+
+      OSS_JWT_SECRET: "${OSS_JWT_SECRET:?Set OSS_JWT_SECRET in .env}"
+
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      cloudflared:
+        condition: service_started
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/api/v1/health'').read()"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - app-network
+
+  ui:
+    image: ${REGISTRY:-dograhai}/dograh-ui:latest
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: "${BACKEND_URL:-http://api:8000}"
+      NEXT_PUBLIC_API_URL: "https://iamazim.com"
+      NODE_ENV: "production"
+      ENABLE_TELEMETRY: "${ENABLE_TELEMETRY:-false}"
+      POSTHOG_KEY: "${POSTHOG_KEY:-}"
+      POSTHOG_HOST: "${POSTHOG_HOST:-https://us.posthog.com}"
+    ports:
+      - "127.0.0.1:3010:3010"
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - app-network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://api:8000 --metrics 0.0.0.0:2000
+    ports:
+      - "127.0.0.1:2000:2000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-network
+
+  coturn:
+    image: coturn/coturn:4.8.0
+    container_name: coturn
+    restart: unless-stopped
+    profiles: ["remote"]
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49152-49200:49152-49200/udp"
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio-data:
+    driver: local
+  shared-tmp:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
