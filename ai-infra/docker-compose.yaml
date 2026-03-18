@@ -12,7 +12,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     container_name: ai-postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}
@@ -45,13 +45,16 @@ services:
   redis:
     image: redis:8.0.2-alpine
     container_name: ai-redis
-    restart: always
+    restart: unless-stopped
     command: >
       --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --save 60 1000
+      --save 300 10
       --appendonly yes
+      --appendfsync everysec
+      --aof-use-rdb-preamble yes
     logging:
       driver: "json-file"
       options:
@@ -80,7 +83,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: minio
-    restart: always
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY not set}
@@ -114,7 +117,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.17.0
     container_name: qdrant
-    restart: always
+    restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
     logging:
@@ -143,7 +146,7 @@ services:
   ollama:
     image: ollama/ollama:0.3.14
     container_name: ollama
-    restart: always
+    restart: unless-stopped
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -178,6 +181,113 @@ services:
         aliases:
           - ollama
 
+  # ── LiveKit — WebRTC Media Server ──────────────────────────
+  livekit:
+    image: livekit/livekit-server:v1.8.2
+    container_name: livekit
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/livekit-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../configs/livekit/livekit.yaml:/etc/livekit-template.yaml:ro
+      - ../scripts/livekit-entrypoint.sh:/etc/livekit-entrypoint.sh:ro
+    environment:
+      VPS_IP: ${VPS_IP:-5.189.131.48}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY not set}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}
+      LIVEKIT_WEBHOOK_URL: ${LIVEKIT_WEBHOOK_URL:-http://dograh-api:8000/api/v1/livekit/webhook}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          memory: 256M
+    ports:
+      - "127.0.0.1:7880:7880"
+      - "7881:7881"
+      - "50000-50200:50000-50200/udp"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7880 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app-network
+      - db-network
+
+  # ── Coturn — TURN/STUN for NAT Traversal ─────────────────
+  coturn:
+    image: coturn/coturn:4.6.2-r12-alpine
+    container_name: coturn
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/coturn-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../configs/coturn/turnserver.conf:/etc/coturn/turnserver-template.conf:ro
+      - ../scripts/coturn-entrypoint.sh:/etc/coturn-entrypoint.sh:ro
+      - /etc/letsencrypt/live/iamazim.com/fullchain.pem:/etc/coturn/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/iamazim.com/privkey.pem:/etc/coturn/certs/privkey.pem:ro
+    user: root
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49152-49252:49152-49252/udp"
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -tlnp | grep -q ':3478'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - app-network
+
+  # ── Cloudflare Tunnel (optional fallback) ─────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.1
+    container_name: cloudflared-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://dograh-api:8000 --metrics 0.0.0.0:2000
+    healthcheck:
+      test: ["NONE"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    networks:
+      - app-network
+
   # ============================================================
   # MONITORING & OBSERVABILITY STACK
   # ============================================================
@@ -186,7 +296,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     container_name: prometheus
-    restart: always
+    restart: unless-stopped
     volumes:
       - ../configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -221,7 +331,7 @@ services:
   grafana:
     image: grafana/grafana:11.2.2
     container_name: grafana
-    restart: always
+    restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD not set}
@@ -232,6 +342,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards-provisioned:ro
     logging:
       driver: "json-file"
       options:
@@ -259,7 +370,7 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.8.2
     container_name: node-exporter
-    restart: always
+    restart: unless-stopped
     command:
       - "--path.rootfs=/host"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)"
@@ -283,7 +394,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
-    restart: always
+    restart: unless-stopped
     cap_add:
       - SYS_PTRACE
       - SYS_ADMIN
@@ -307,7 +418,7 @@ services:
   loki:
     image: grafana/loki:3.2.1
     container_name: loki
-    restart: always
+    restart: unless-stopped
     command: -config.file=/etc/loki/loki.yml
     volumes:
       - ../configs/loki/loki.yml:/etc/loki/loki.yml:ro
@@ -337,7 +448,7 @@ services:
   promtail:
     image: grafana/promtail:3.2.1
     container_name: promtail
-    restart: always
+    restart: unless-stopped
     command: -config.file=/etc/promtail/promtail.yml
     volumes:
       - ../configs/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
@@ -362,26 +473,26 @@ services:
 # ─────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
-    name: postgres_data
+    name: ai-call-platform_postgres_data
   redis_data:
-    name: redis_data
+    name: ai-call-platform_redis_data
   minio-data:
-    name: minio-data
+    name: ai-call-platform_minio-data
     driver: local
   qdrant_data:
-    name: qdrant_data
+    name: ai-call-platform_qdrant_data
     driver: local
   ollama_data:
-    name: ollama_data
+    name: ai-call-platform_ollama_data
     driver: local
   prometheus_data:
-    name: prometheus_data
+    name: ai-call-platform_prometheus_data
     driver: local
   grafana_data:
-    name: grafana_data
+    name: ai-call-platform_grafana_data
     driver: local
   loki_data:
-    name: loki_data
+    name: ai-call-platform_loki_data
     driver: local
 
 # ── Networks (all external — shared across stacks) ──────────
