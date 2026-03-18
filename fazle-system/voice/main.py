@@ -3,6 +3,7 @@
 # Joins rooms, transcribes speech, queries Brain, speaks reply
 # Uses OpenAI Realtime or Whisper STT + TTS pipeline
 # ============================================================
+import json
 import logging
 import os
 
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     brain_url: str = "http://fazle-brain:8200"
     tts_voice: str = "alloy"
+    tts_engine: str = "piper"
+    voice_model: str = "en_US-lessac-medium"
+    voice_model_dir: str = "/models"
     livekit_url: str = "ws://livekit:7880"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
@@ -41,6 +45,21 @@ settings = Settings()
 # Also read from common env vars
 OPENAI_API_KEY = settings.openai_api_key or os.getenv("OPENAI_API_KEY", "")
 BRAIN_URL = settings.brain_url or os.getenv("FAZLE_BRAIN_URL", "http://fazle-brain:8200")
+TTS_ENGINE = settings.tts_engine or os.getenv("FAZLE_VOICE_TTS_ENGINE", "piper")
+VOICE_MODEL = settings.voice_model or os.getenv("FAZLE_VOICE_VOICE_MODEL", "en_US-lessac-medium")
+VOICE_MODEL_DIR = settings.voice_model_dir or os.getenv("FAZLE_VOICE_VOICE_MODEL_DIR", "/models")
+
+
+def build_tts():
+    """Build the TTS engine — Piper (local) or OpenAI (remote)."""
+    if TTS_ENGINE == "piper":
+        from piper_tts import PiperTTS
+        model_path = os.path.join(VOICE_MODEL_DIR, f"{VOICE_MODEL}.onnx")
+        logger.info(f"Using Piper TTS: {model_path}")
+        return PiperTTS(model_path=model_path)
+    else:
+        logger.info(f"Using OpenAI TTS: voice={settings.tts_voice}")
+        return openai.TTS(api_key=OPENAI_API_KEY, voice=settings.tts_voice)
 
 
 async def query_brain(message: str, user_id: str, user_name: str, relationship: str) -> str:
@@ -63,6 +82,43 @@ async def query_brain(message: str, user_id: str, user_name: str, relationship: 
         except Exception as e:
             logger.error(f"Brain query failed: {e}")
             return "Sorry, I'm having trouble thinking right now. Give me a moment."
+
+
+async def query_brain_stream(message: str, user_id: str, user_name: str, relationship: str):
+    """Stream response from Fazle Brain /chat/stream endpoint. Yields text chunks."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            async with client.stream(
+                "POST",
+                f"{BRAIN_URL}/chat/stream",
+                json={
+                    "message": message,
+                    "user": user_name,
+                    "user_id": user_id,
+                    "user_name": user_name,
+                    "relationship": relationship,
+                    "source": "voice",
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        chunk_str = line[6:].strip()
+                        if not chunk_str:
+                            continue
+                        try:
+                            chunk = json.loads(chunk_str)
+                            text = chunk.get("content", "")
+                            done = chunk.get("done", False)
+                            if text:
+                                yield text
+                            if done:
+                                break
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.error(f"Brain stream failed: {e}")
+            yield "Sorry, I'm having trouble thinking right now."
 
 
 class FazleLLM(llm.LLM):
@@ -92,18 +148,50 @@ class FazleLLM(llm.LLM):
                 last_message = msg.content
                 break
 
-        reply = await query_brain(
+        # Use streaming endpoint for lower TTFB
+        return _StreamingBrainResponse(
             last_message,
             self._user_id,
             self._user_name,
             self._relationship,
+            chat_ctx,
         )
 
-        return _SingleResponseStream(reply, chat_ctx)
+
+class _StreamingBrainResponse(llm.LLMStream):
+    """Streams text chunks from Brain /chat/stream as an LLM stream for TTS."""
+
+    def __init__(self, message: str, user_id: str, user_name: str, relationship: str, chat_ctx: llm.ChatContext):
+        super().__init__(chat_ctx=chat_ctx)
+        self._message = message
+        self._user_id = user_id
+        self._user_name = user_name
+        self._relationship = relationship
+        self._gen = None
+        self._done = False
+
+    async def __anext__(self) -> llm.ChatChunk:
+        if self._done:
+            raise StopAsyncIteration
+        if self._gen is None:
+            self._gen = query_brain_stream(
+                self._message, self._user_id, self._user_name, self._relationship
+            )
+        try:
+            text = await self._gen.__anext__()
+            delta = llm.ChoiceDelta(role="assistant", content=text)
+            choice = llm.Choice(delta=delta, index=0)
+            return llm.ChatChunk(choices=[choice])
+        except StopAsyncIteration:
+            self._done = True
+            raise
+
+    async def aclose(self):
+        self._done = True
 
 
 class _SingleResponseStream(llm.LLMStream):
-    """Wraps a single string response as an LLM stream."""
+    """Wraps a single string response as an LLM stream (fallback)."""
 
     def __init__(self, text: str, chat_ctx: llm.ChatContext):
         super().__init__(chat_ctx=chat_ctx)
@@ -123,8 +211,9 @@ class _SingleResponseStream(llm.LLMStream):
 
 
 def prewarm(proc: JobProcess):
-    """Preload VAD model for faster startup."""
+    """Preload VAD + TTS models for faster startup."""
     proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["tts"] = build_tts()
 
 
 async def entrypoint(ctx: JobContext):
@@ -160,7 +249,7 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         stt=openai.STT(api_key=OPENAI_API_KEY),
         llm=fazle_llm,
-        tts=openai.TTS(api_key=OPENAI_API_KEY, voice=settings.tts_voice),
+        tts=ctx.proc.userdata["tts"],
         chat_ctx=initial_ctx,
         min_endpointing_delay=0.5,
     )
@@ -177,6 +266,7 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
+            initialize_process_timeout=60.0,
             api_key=settings.livekit_api_key or os.getenv("LIVEKIT_API_KEY", ""),
             api_secret=settings.livekit_api_secret or os.getenv("LIVEKIT_API_SECRET", ""),
             ws_url=settings.livekit_url or os.getenv("LIVEKIT_URL", "ws://livekit:7880"),

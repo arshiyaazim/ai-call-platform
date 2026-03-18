@@ -93,6 +93,9 @@ services:
       LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
       LEARNING_ENGINE_URL: "http://fazle-learning-engine:8900"
       USE_LLM_GATEWAY: "true"
+      VOICE_FAST_MODE: "${FAZLE_VOICE_FAST_MODE:-false}"
+      VOICE_OLLAMA_MODEL: "${FAZLE_VOICE_OLLAMA_MODEL:-qwen2.5:3b}"
+      PERSONA_CACHE_TTL: "${FAZLE_PERSONA_CACHE_TTL:-300}"
     logging:
       driver: "json-file"
       options:
@@ -379,7 +382,7 @@ services:
       CACHE_TTL: "${FAZLE_CACHE_TTL:-300}"
       RATE_LIMIT_RPM: "${FAZLE_RATE_LIMIT_RPM:-60}"
       RATE_LIMIT_PER_USER_RPS: "${FAZLE_RATE_LIMIT_PER_USER_RPS:-10}"
-      BATCH_WINDOW_MS: "${FAZLE_BATCH_WINDOW_MS:-75}"
+      BATCH_WINDOW_MS: "${FAZLE_BATCH_WINDOW_MS:-10}"
       BATCH_MAX_SIZE: "${FAZLE_BATCH_MAX_SIZE:-4}"
     logging:
       driver: "json-file"

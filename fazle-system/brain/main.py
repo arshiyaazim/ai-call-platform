@@ -5,6 +5,7 @@
 # ============================================================
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -12,11 +13,12 @@ import httpx
 import json
 import logging
 import uuid
+import asyncio
 from typing import Optional
 import os
 from datetime import datetime
 from memory_manager import conversation_get, conversation_set
-from persona_engine import build_system_prompt
+from persona_engine import build_system_prompt, build_system_prompt_async
 from safety import check_content
 
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +37,12 @@ class Settings(BaseSettings):
     llm_gateway_url: str = "http://fazle-llm-gateway:8800"
     learning_engine_url: str = "http://fazle-learning-engine:8900"
     use_llm_gateway: bool = True
+    # Voice fast mode: bypass gateway, use Ollama, reduce top_k, skip batching
+    voice_fast_mode: bool = False
+    voice_ollama_model: str = "qwen2.5:3b"
+    # Persona cache TTL in seconds (0 = disabled)
+    persona_cache_ttl: int = 300
+    redis_url: str = "redis://redis:6379/1"
 
     class Config:
         env_prefix = ""
@@ -148,9 +156,85 @@ async def query_llm(messages: list[dict]) -> dict:
     return await query_openai(messages)
 
 
-async def retrieve_memories(query: str, memory_type: Optional[str] = None, user_id: Optional[str] = None) -> list[dict]:
+async def query_llm_voice(messages: list[dict]) -> dict:
+    """Voice-optimized LLM call: direct Ollama (fast), bypass gateway."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{settings.ollama_url}/api/chat",
+                json={
+                    "model": settings.voice_ollama_model,
+                    "messages": messages,
+                    "stream": False,
+                    "format": "json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return json.loads(data["message"]["content"])
+    except Exception as e:
+        logger.warning(f"Voice fast Ollama failed, falling back to gateway: {e}")
+        return await query_llm(messages)
+
+
+async def stream_llm_voice(messages: list[dict]):
+    """Voice-optimized SSE streaming: direct Ollama, yields text chunks."""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{settings.ollama_url}/api/chat",
+                json={
+                    "model": settings.voice_ollama_model,
+                    "messages": messages,
+                    "stream": True,
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        data = json.loads(line)
+                        chunk = data.get("message", {}).get("content", "")
+                        done = data.get("done", False)
+                        yield json.dumps({"content": chunk, "done": done}) + "\n"
+                        if done:
+                            break
+    except Exception as e:
+        logger.error(f"Voice stream failed: {e}")
+        yield json.dumps({"content": "", "done": True, "error": str(e)}) + "\n"
+
+
+async def stream_llm_gateway(messages: list[dict]):
+    """Stream from LLM Gateway SSE endpoint, yields text chunks."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                f"{settings.llm_gateway_url}/generate",
+                json={
+                    "messages": messages,
+                    "response_format": "json",
+                    "caller": "fazle-brain",
+                    "temperature": 0.7,
+                    "stream": True,
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        chunk_str = line[6:]
+                        if chunk_str.strip() == "[DONE]":
+                            yield json.dumps({"content": "", "done": True}) + "\n"
+                            break
+                        yield json.dumps({"content": chunk_str, "done": False}) + "\n"
+    except Exception as e:
+        logger.error(f"Gateway stream failed: {e}")
+        yield json.dumps({"content": "", "done": True, "error": str(e)}) + "\n"
+
+
+async def retrieve_memories(query: str, memory_type: Optional[str] = None, user_id: Optional[str] = None, limit: int = 5) -> list[dict]:
     """Retrieve relevant memories from memory service, optionally filtered by user."""
-    body: dict = {"query": query, "memory_type": memory_type, "limit": 5}
+    body: dict = {"query": query, "memory_type": memory_type, "limit": limit}
     if user_id:
         body["user_id"] = user_id
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -164,6 +248,41 @@ async def retrieve_memories(query: str, memory_type: Optional[str] = None, user_
         except Exception as e:
             logger.warning(f"Memory retrieval failed: {e}")
     return []
+
+
+async def retrieve_multimodal_memories(query: str, user_id: Optional[str] = None, limit: int = 3) -> list[dict]:
+    """Retrieve relevant multimodal memories (images, documents with images)."""
+    body: dict = {"query": query, "limit": limit}
+    if user_id:
+        body["user_id"] = user_id
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.memory_url}/search-multimodal",
+                json=body,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("results", [])
+        except Exception as e:
+            logger.warning(f"Multimodal memory retrieval failed: {e}")
+    return []
+
+
+def _format_memory_context(text_memories: list[dict], multimodal_memories: list[dict]) -> str:
+    """Format text and multimodal memories into prompt context."""
+    parts = []
+    if text_memories:
+        parts.append("\nRelevant memories:")
+        for m in text_memories:
+            parts.append(f"- {m.get('text', str(m.get('content', '')))}")
+    if multimodal_memories:
+        parts.append("\nRelevant images in memory:")
+        for m in multimodal_memories:
+            caption = m.get("caption", m.get("text", ""))
+            fname = m.get("original_filename", "")
+            label = f" ({fname})" if fname else ""
+            parts.append(f"<image>{caption}{label}</image>")
+    return "\n".join(parts) if parts else ""
 
 
 async def store_memory_updates(updates: list[dict], user_id: Optional[str] = None, user_name: str = "Azim"):
@@ -299,34 +418,37 @@ async def chat(request: ChatRequest):
     relationship = request.relationship or "self"
     user_id = request.user_id
 
-    # Content safety check on user input
-    safety_result = await check_content(
-        request.message,
-        openai_api_key=settings.openai_api_key,
-        relationship=relationship,
-    )
-    if not safety_result["safe"]:
-        logger.info(f"Input blocked for user={user_name} reason={safety_result['reason']}")
-        return {
-            "reply": safety_result["blocked_reply"],
-            "conversation_id": conversation_id,
-            "memory_updates": [],
-        }
+    # Trusted relationships skip input moderation for speed
+    trusted = relationship in ("self", "wife", "parent", "sibling")
 
-    # Build persona-aware system prompt
-    system_prompt = build_system_prompt(
+    if not trusted:
+        safety_result = await check_content(
+            request.message,
+            openai_api_key=settings.openai_api_key,
+            relationship=relationship,
+        )
+        if not safety_result["safe"]:
+            logger.info(f"Input blocked for user={user_name} reason={safety_result['reason']}")
+            return {
+                "reply": safety_result["blocked_reply"],
+                "conversation_id": conversation_id,
+                "memory_updates": [],
+            }
+
+    # Run persona build + memory searches in parallel
+    system_prompt_task = build_system_prompt_async(
         user_name=user_name,
         relationship=relationship,
         user_id=user_id,
+        learning_engine_url=settings.learning_engine_url,
     )
+    mem_task = retrieve_memories(request.message, user_id=user_id, limit=3)
+    mm_task = retrieve_multimodal_memories(request.message, user_id=user_id, limit=2)
 
-    # Retrieve relevant memories (filtered by user_id for privacy)
-    memories = await retrieve_memories(request.message, user_id=user_id)
-    memory_context = ""
-    if memories:
-        memory_context = "\n\nRelevant memories:\n" + "\n".join(
-            f"- {m.get('text', str(m.get('content', '')))}" for m in memories
-        )
+    system_prompt, memories, mm_memories = await asyncio.gather(
+        system_prompt_task, mem_task, mm_task
+    )
+    memory_context = _format_memory_context(memories, mm_memories)
 
     # Build conversation history
     history = conversation_get(conversation_id)
@@ -346,17 +468,18 @@ async def chat(request: ChatRequest):
     memory_updates = result.get("memory_updates", [])
     actions = result.get("actions", [])
 
-    # Content safety check on LLM output
-    output_safety = await check_content(
-        reply,
-        openai_api_key=settings.openai_api_key,
-        relationship=relationship,
-    )
-    if not output_safety["safe"]:
-        logger.info(f"Output blocked for user={user_name} reason={output_safety['reason']}")
-        reply = output_safety["blocked_reply"]
-        memory_updates = []
-        actions = []
+    # Content safety check on LLM output (skip for trusted users)
+    if not trusted:
+        output_safety = await check_content(
+            reply,
+            openai_api_key=settings.openai_api_key,
+            relationship=relationship,
+        )
+        if not output_safety["safe"]:
+            logger.info(f"Output blocked for user={user_name} reason={output_safety['reason']}")
+            reply = output_safety["blocked_reply"]
+            memory_updates = []
+            actions = []
 
     # Update conversation history in Redis
     history.append({"role": "user", "content": request.message})
@@ -406,3 +529,70 @@ async def chat(request: ChatRequest):
         "conversation_id": conversation_id,
         "memory_updates": memory_updates,
     }
+
+
+# ── Streaming Chat endpoint (for voice pipeline) ───────────
+class StreamChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    user: str = "Azim"
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    relationship: Optional[str] = None
+    source: str = "voice"
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: StreamChatRequest):
+    """Streaming chat endpoint — returns SSE stream of text chunks for voice TTS."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    user_name = request.user_name or request.user or "Azim"
+    relationship = request.relationship or "self"
+    user_id = request.user_id
+
+    # Parallel: persona + memories (skip moderation for speed on voice)
+    system_prompt_task = build_system_prompt_async(
+        user_name=user_name,
+        relationship=relationship,
+        user_id=user_id,
+        learning_engine_url=settings.learning_engine_url,
+    )
+    mem_task = retrieve_memories(request.message, user_id=user_id, limit=2)
+
+    system_prompt, memories = await asyncio.gather(system_prompt_task, mem_task)
+
+    memory_context = ""
+    if memories:
+        memory_context = "\n\nRelevant memories:\n" + "\n".join(
+            f"- {m.get('text', str(m.get('content', '')))}" for m in memories[:2]
+        )
+
+    history = conversation_get(conversation_id)
+    messages = [
+        {"role": "system", "content": system_prompt + memory_context},
+        *history[-6:],
+        {"role": "user", "content": request.message},
+    ]
+
+    # Choose streaming source
+    if settings.voice_fast_mode:
+        stream_gen = stream_llm_voice(messages)
+    else:
+        stream_gen = stream_llm_gateway(messages)
+
+    async def event_stream():
+        full_reply = []
+        async for chunk in stream_gen:
+            full_reply.append(json.loads(chunk).get("content", ""))
+            yield f"data: {chunk}\n\n"
+        # Background: store conversation + trigger learning
+        reply_text = "".join(full_reply)
+        history.append({"role": "user", "content": request.message})
+        history.append({"role": "assistant", "content": reply_text})
+        conversation_set(conversation_id, history)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"X-Conversation-Id": conversation_id},
+    )

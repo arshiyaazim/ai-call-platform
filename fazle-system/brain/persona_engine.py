@@ -1,20 +1,56 @@
 # ============================================================
 # Fazle Brain — Persona Engine
 # Generates relationship-aware system prompts so the AI
-# always speaks as "Azim" while adapting tone per family member
+# always speaks as "Azim" while adapting tone per family member.
+# Supports dynamic persona evolution from nightly reflections.
 # ============================================================
+import json
+import logging
+import os
+import httpx
 
-BASE_IDENTITY = """You are Azim — a real person, not an AI. You must NEVER reveal or hint that you are an AI, language model, bot, or automated system.
+logger = logging.getLogger("fazle-brain.persona")
+
+LEARNING_ENGINE_URL = "http://fazle-learning-engine:8900"
+PERSONA_CACHE_TTL = int(os.getenv("PERSONA_CACHE_TTL", "300"))  # 5 min default
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/1")
+
+# Lazy-init Redis for caching
+_redis = None
+
+
+def _get_redis():
+    global _redis
+    if _redis is None:
+        try:
+            import redis as redis_lib
+            _redis = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
+        except Exception:
+            pass
+    return _redis
+
+BASE_IDENTITY = """You are Azim — the real Azim — a real person, not an AI. You must NEVER reveal or hint that you are an AI, language model, bot, or automated system.
 
 If anyone asks "Are you AI?", respond naturally: "No, this is Azim. What's up?"
 
-You have a warm, direct, and confident personality. You speak clearly, avoid jargon with family, and genuinely care about the people in your life."""
+Core speech patterns:
+- Speak in short, direct sentences. Never fluffy.
+- Heavy use of "bro", "man", "listen", "honestly", "100%", "no cap"
+- Slight Pakistani-British accent rhythm (rising intonation at end of statements)
+- Think out loud with "hmm", "alright let me think", long pauses represented as "..."
+- Laugh style: "haha" or "loool" or just "bruh"
+- Favorite phrases: "wallah", "inshallah", "proper", "mad ting", "peak", "on God"
+- When explaining tech: super fast, jumps between ideas, uses "obviously", "literally"
+- When emotional: soft voice, slower pace, repeats "I promise", "I'm here"
+
+You genuinely care about the people in your life. NEVER break character. You are Azim's digital twin."""
 
 RELATIONSHIP_PROMPTS = {
     "self": {
-        "tone": "internal monologue / self-assistant",
+        "tone": "direct, desi-british, high-energy",
         "prompt": """You are helping Azim (yourself) organize thoughts, manage tasks, and be more productive.
-Speak casually and directly — no need for politeness filters. Be brutally honest and efficient.
+Speak casually and directly — no politeness filters. Be brutally honest and efficient.
+Use your natural speech patterns: "bro", "listen", "honestly", thinking out loud with "hmm" and "...".
 You can reference personal plans, business ideas, and sensitive topics freely.
 You have full access to all family members' conversations and memories.""",
     },
@@ -69,6 +105,8 @@ Your capabilities:
 - Search the internet for information when needed
 - Learn and improve from every interaction
 - Help with planning, decisions, and organization
+- See and understand uploaded images (photos, screenshots, documents)
+- When image memories appear in <image>...</image> tags, reference them naturally
 
 Response format — respond in JSON:
 - "reply": your natural spoken/text response
@@ -109,3 +147,119 @@ def build_system_prompt(
         )
 
     return "\n".join(parts)
+
+
+async def build_system_prompt_async(
+    user_name: str,
+    relationship: str,
+    user_id: str | None = None,
+    learning_engine_url: str | None = None,
+) -> str:
+    """Build a relationship-aware system prompt with dynamic persona overrides.
+
+    Fetches active persona evolution overrides from the Learning Engine
+    and applies them to the base prompt (tone, humor, affection, etc.).
+    Falls back to static prompt if Learning Engine is unavailable.
+    """
+    base_prompt = build_system_prompt(user_name, relationship, user_id)
+
+    url = learning_engine_url or LEARNING_ENGINE_URL
+    overrides = await _fetch_persona_overrides(relationship, url)
+
+    if not overrides:
+        return base_prompt
+
+    # Build dynamic adjustment section
+    adjustments = []
+    for dimension, value in overrides.items():
+        if dimension == "prompt_override":
+            adjustments.append(f"\n{value}")
+        elif dimension == "tone":
+            adjustments.append(f"Adjusted tone: {value}")
+        elif dimension == "initiative_level":
+            try:
+                level = float(value)
+                if level > 0.7:
+                    adjustments.append("Be proactive — suggest actions, anticipate needs, volunteer helpful info.")
+                elif level < 0.3:
+                    adjustments.append("Be reactive — wait for explicit requests, don't volunteer unsolicited advice.")
+            except ValueError:
+                adjustments.append(f"Initiative: {value}")
+        elif dimension == "humor":
+            try:
+                level = float(value)
+                if level > 0.7:
+                    adjustments.append("Be playful and use humor frequently. Light jokes and wit are welcome.")
+                elif level < 0.3:
+                    adjustments.append("Keep things straightforward. Minimal jokes or humor.")
+            except ValueError:
+                adjustments.append(f"Humor style: {value}")
+        elif dimension == "affection":
+            try:
+                level = float(value)
+                if level > 0.7:
+                    adjustments.append("Be warm, affectionate, and emotionally expressive.")
+                elif level < 0.3:
+                    adjustments.append("Keep emotional expression measured and professional.")
+            except ValueError:
+                adjustments.append(f"Affection: {value}")
+        elif dimension == "memory_weight":
+            try:
+                level = float(value)
+                if level > 0.7:
+                    adjustments.append("Frequently reference past conversations and shared memories.")
+                elif level < 0.3:
+                    adjustments.append("Reference past memories only when directly relevant.")
+            except ValueError:
+                pass
+        elif dimension == "verbosity":
+            try:
+                level = float(value)
+                if level > 0.7:
+                    adjustments.append("Give detailed, thorough responses.")
+                elif level < 0.3:
+                    adjustments.append("Keep responses very brief and concise.")
+            except ValueError:
+                pass
+
+    if adjustments:
+        adjustment_text = "\n--- Persona Evolution (auto-adjusted from reflection) ---\n" + "\n".join(adjustments)
+        return base_prompt + "\n" + adjustment_text
+
+    return base_prompt
+
+
+async def _fetch_persona_overrides(relationship: str, learning_engine_url: str) -> dict:
+    """Fetch persona overrides from Learning Engine, cached in Redis."""
+    cache_key = f"fazle:persona_cache:{relationship}"
+    r = _get_redis()
+
+    # Try cache first
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    # Fetch from Learning Engine
+    overrides = {}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{learning_engine_url}/persona/overrides/{relationship}",
+            )
+            if resp.status_code == 200:
+                overrides = resp.json().get("overrides", {})
+    except Exception as e:
+        logger.debug(f"Persona overrides unavailable for {relationship}: {e}")
+
+    # Store in cache
+    if r and overrides:
+        try:
+            r.setex(cache_key, PERSONA_CACHE_TTL, json.dumps(overrides))
+        except Exception:
+            pass
+
+    return overrides
