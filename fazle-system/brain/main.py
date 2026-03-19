@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     task_url: str = "http://fazle-task-engine:8400"
     llm_gateway_url: str = "http://fazle-llm-gateway:8800"
     learning_engine_url: str = "http://fazle-learning-engine:8900"
+    autonomy_engine_url: str = "http://fazle-autonomy-engine:9100"
+    tool_engine_url: str = "http://fazle-tool-engine:9200"
+    knowledge_graph_url: str = "http://fazle-knowledge-graph:9300"
+    autonomous_runner_url: str = "http://fazle-autonomous-runner:9400"
+    self_learning_url: str = "http://fazle-self-learning:9500"
     use_llm_gateway: bool = True
     # Voice fast mode: bypass gateway, use Ollama, reduce top_k, skip batching
     voice_fast_mode: bool = False
@@ -828,6 +833,106 @@ async def chat_agent(request: AgentChatRequest):
         "agents_used": agent_result.get("agents_used", []),
         "memory_updates": memory_updates,
     }
+
+
+# ── Phase-5 Autonomy Pipeline ───────────────────────────────
+
+class AutonomyRequest(BaseModel):
+    goal: str
+    context: Optional[str] = None
+    auto_execute: bool = False
+    user_id: Optional[str] = None
+
+
+@app.post("/autonomy/plan")
+async def autonomy_plan(request: AutonomyRequest):
+    """Proxy to Autonomy Engine — create and optionally execute a plan."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.autonomy_engine_url}/autonomy/plan",
+                json=request.model_dump(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        except Exception as e:
+            logger.error(f"Autonomy engine error: {e}")
+            raise HTTPException(status_code=502, detail="Autonomy engine unreachable")
+
+
+@app.get("/autonomy/plans")
+async def autonomy_plans(limit: int = 20):
+    """List autonomy plans."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(f"{settings.autonomy_engine_url}/autonomy/plans", params={"limit": limit})
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Autonomy list error: {e}")
+            raise HTTPException(status_code=502, detail="Autonomy engine unreachable")
+
+
+@app.post("/knowledge-graph/update")
+async def kg_update(conversation_id: str, text: str, user_id: Optional[str] = None):
+    """Update knowledge graph from conversation."""
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.knowledge_graph_url}/graph/update",
+                json={"conversation_id": conversation_id, "text": text, "user_id": user_id},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Knowledge graph update error: {e}")
+            return {"error": "Knowledge graph update failed"}
+
+
+@app.get("/knowledge-graph/stats")
+async def kg_stats():
+    """Get knowledge graph statistics."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.knowledge_graph_url}/graph/stats")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Knowledge graph stats error: {e}")
+            raise HTTPException(status_code=502, detail="Knowledge graph unreachable")
+
+
+@app.post("/self-learning/analyze")
+async def sl_analyze(text: Optional[str] = None, focus_area: Optional[str] = None):
+    """Trigger self-learning analysis."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.self_learning_url}/learning/analyze",
+                json={"text": text, "focus_area": focus_area},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Self-learning analyze error: {e}")
+            raise HTTPException(status_code=502, detail="Self-learning engine unreachable")
+
+
+@app.get("/self-learning/insights")
+async def sl_insights(limit: int = 20):
+    """Get self-learning insights."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(
+                f"{settings.self_learning_url}/learning/insights", params={"limit": limit},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Self-learning insights error: {e}")
+            raise HTTPException(status_code=502, detail="Self-learning engine unreachable")
 
 
 # ── Agent-powered Streaming Chat ───────────────────────────

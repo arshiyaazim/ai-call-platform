@@ -13,6 +13,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  Zap,
+  Network,
+  PlayCircle,
+  Lightbulb,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebarStore } from '@/store/sidebar';
@@ -25,6 +29,10 @@ const navItems = [
   { href: '/dashboard/fazle/tools', label: 'Tools', icon: Wrench },
   { href: '/dashboard/fazle/tasks', label: 'Tasks', icon: CalendarClock },
   { href: '/dashboard/fazle/persona', label: 'Persona', icon: UserCog },
+  { href: '/dashboard/fazle/autonomy', label: 'Autonomy', icon: Zap },
+  { href: '/dashboard/fazle/knowledge-graph', label: 'Knowledge Graph', icon: Network },
+  { href: '/dashboard/fazle/autonomous-tasks', label: 'Auto Tasks', icon: PlayCircle },
+  { href: '/dashboard/fazle/learning', label: 'Learning', icon: Lightbulb },
   { href: '/dashboard/fazle/logs', label: 'Logs', icon: ScrollText },
 ];
 

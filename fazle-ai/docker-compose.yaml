@@ -28,6 +28,12 @@ services:
       FAZLE_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}"
       FAZLE_LIVEKIT_URL: "${FAZLE_LIVEKIT_URL:-wss://livekit.iamazim.com}"
       FAZLE_LEARNING_ENGINE_URL: "http://fazle-learning-engine:8900"
+      # Phase-5 Autonomous AI services
+      FAZLE_AUTONOMY_ENGINE_URL: "http://fazle-autonomy-engine:9100"
+      FAZLE_TOOL_ENGINE_URL: "http://fazle-tool-engine:9200"
+      FAZLE_KNOWLEDGE_GRAPH_URL: "http://fazle-knowledge-graph:9300"
+      FAZLE_AUTONOMOUS_RUNNER_URL: "http://fazle-autonomous-runner:9400"
+      FAZLE_SELF_LEARNING_URL: "http://fazle-self-learning:9500"
       # Vision + MinIO
       FAZLE_OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       FAZLE_MINIO_ENDPOINT: "minio:9000"
@@ -85,6 +91,12 @@ services:
       LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
       LEARNING_ENGINE_URL: "http://fazle-learning-engine:8900"
       USE_LLM_GATEWAY: "true"
+      # Phase-5 Autonomous AI services
+      AUTONOMY_ENGINE_URL: "http://fazle-autonomy-engine:9100"
+      TOOL_ENGINE_URL: "http://fazle-tool-engine:9200"
+      KNOWLEDGE_GRAPH_URL: "http://fazle-knowledge-graph:9300"
+      AUTONOMOUS_RUNNER_URL: "http://fazle-autonomous-runner:9400"
+      SELF_LEARNING_URL: "http://fazle-self-learning:9500"
       # Voice fast mode & agent system
       VOICE_FAST_MODE: "${FAZLE_VOICE_FAST_MODE:-true}"
       VOICE_OLLAMA_MODEL: "${VOICE_OLLAMA_MODEL:-qwen2.5:3b}"
@@ -525,6 +537,196 @@ services:
       - ai-network
       - app-network
       - db-network
+
+  # ── Phase-5: Autonomy Engine — Goal Decomposition & Planning ──
+  fazle-autonomy-engine:
+    build: ../fazle-system/autonomy-engine
+    container_name: fazle-autonomy-engine
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      AUTONOMY_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      AUTONOMY_BRAIN_URL: "http://fazle-brain:8200"
+      AUTONOMY_MEMORY_URL: "http://fazle-memory:8300"
+      AUTONOMY_TOOLS_URL: "http://fazle-web-intelligence:8500"
+      AUTONOMY_TOOL_ENGINE_URL: "http://fazle-tool-engine:9200"
+      AUTONOMY_KNOWLEDGE_GRAPH_URL: "http://fazle-knowledge-graph:9300"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+      fazle-memory:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9100/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ai-network
+      - app-network
+
+  # ── Phase-5: Tool Execution Engine — Secure Tool Orchestration ──
+  fazle-tool-engine:
+    build: ../fazle-system/tool-engine
+    container_name: fazle-tool-engine
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      TOOL_ENGINE_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      TOOL_ENGINE_MEMORY_URL: "http://fazle-memory:8300"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9200/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ai-network
+      - app-network
+
+  # ── Phase-5: Knowledge Graph — Entity & Relationship Store ──
+  fazle-knowledge-graph:
+    build: ../fazle-system/knowledge-graph
+    container_name: fazle-knowledge-graph
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      KNOWLEDGE_GRAPH_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      KNOWLEDGE_GRAPH_MEMORY_URL: "http://fazle-memory:8300"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9300/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ai-network
+      - app-network
+
+  # ── Phase-5: Autonomous Task Runner — Background Task Loops ──
+  fazle-autonomous-runner:
+    build: ../fazle-system/autonomous-runner
+    container_name: fazle-autonomous-runner
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      AUTO_RUNNER_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      AUTO_RUNNER_BRAIN_URL: "http://fazle-brain:8200"
+      AUTO_RUNNER_MEMORY_URL: "http://fazle-memory:8300"
+      AUTO_RUNNER_TOOLS_URL: "http://fazle-web-intelligence:8500"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+      fazle-brain:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9400/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ai-network
+      - app-network
+
+  # ── Phase-5: Self-Learning Engine — Pattern & Insight Extraction ──
+  fazle-self-learning:
+    build: ../fazle-system/self-learning
+    container_name: fazle-self-learning
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      SELF_LEARNING_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      SELF_LEARNING_MEMORY_URL: "http://fazle-memory:8300"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9500/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ai-network
+      - app-network
 
 networks:
   app-network:
