@@ -14,6 +14,8 @@ export default function ChatPanel() {
   const [searchResults, setSearchResults] = useState(null);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -117,7 +119,24 @@ export default function ChatPanel() {
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setMessages((prev) => [...prev, { role: "user", content: `📎 Uploading: ${file.name}...` }]);
+    await processFileUpload(file);
+  };
+
+  const processFileUpload = async (file) => {
+    const isImage = /\.(png|jpg|jpeg|gif)$/i.test(file.name);
+    // Show preview for images
+    let previewUrl = null;
+    if (isImage) {
+      previewUrl = URL.createObjectURL(file);
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: `📎 Uploading: ${file.name}...`,
+        imagePreview: previewUrl,
+      },
+    ]);
     setLoading(true);
     try {
       const formData = new FormData();
@@ -131,10 +150,20 @@ export default function ChatPanel() {
       const data = await res.json();
       setMessages((prev) => {
         const updated = [...prev];
-        updated[updated.length - 1] = {
-          role: "user",
-          content: `📎 ${data.filename} (${(data.size / 1024).toFixed(1)}KB)${data.text_extracted ? " — text extracted and added to knowledge base" : ""}`,
-        };
+        const lastIdx = updated.length - 1;
+        if (isImage && data.caption) {
+          updated[lastIdx] = {
+            role: "user",
+            content: `📷 ${data.filename}`,
+            imagePreview: previewUrl,
+            caption: data.caption,
+          };
+        } else {
+          updated[lastIdx] = {
+            role: "user",
+            content: `📎 ${data.filename} (${(data.size / 1024).toFixed(1)}KB)${data.text_extracted ? " — text extracted and added to knowledge base" : ""}`,
+          };
+        }
         return updated;
       });
     } catch {
@@ -148,6 +177,36 @@ export default function ChatPanel() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  // Drag & drop handlers
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        const ext = file.name.split(".").pop()?.toLowerCase();
+        const allowed = ["pdf", "docx", "txt", "png", "jpg", "jpeg", "gif"];
+        if (allowed.includes(ext)) {
+          processFileUpload(file);
+        }
+      }
+    },
+    [session]
+  );
 
   const toggleRecording = useCallback(async () => {
     if (isRecording) {
@@ -182,7 +241,33 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-fazle-600/10 border-2 border-dashed border-fazle-500 rounded-xl flex items-center justify-center backdrop-blur-sm">
+          <p className="text-fazle-300 text-lg font-medium">Drop image or file here</p>
+        </div>
+      )}
+
+      {/* Image preview modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <img
+            src={previewImage}
+            alt="Preview"
+            className="max-w-full max-h-full object-contain rounded-lg"
+          />
+        </div>
+      )}
+
       <div className="border-b border-gray-800 p-4">
         <h2 className="text-lg font-semibold text-gray-200">Chat with Azim</h2>
         <p className="text-xs text-gray-500">
@@ -203,12 +288,25 @@ export default function ChatPanel() {
                   : "bg-[#1a1a2e] text-gray-200 rounded-bl-md border border-gray-700/50"
               }`}
             >
+              {/* Image preview in user messages */}
+              {msg.imagePreview && (
+                <img
+                  src={msg.imagePreview}
+                  alt="Upload"
+                  className="max-w-[200px] max-h-[200px] rounded-lg mb-2 cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => setPreviewImage(msg.imagePreview)}
+                />
+              )}
+              {/* Caption under image */}
+              {msg.caption && (
+                <p className="text-xs text-white/70 italic mb-1">&quot;{msg.caption}&quot;</p>
+              )}
               {msg.role === "assistant" ? (
                 <div className="prose prose-invert prose-sm max-w-none [&_pre]:bg-[#0d0d14] [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_code]:text-fazle-300 [&_a]:text-fazle-400">
                   <ReactMarkdown>{msg.content}</ReactMarkdown>
                 </div>
               ) : (
-                msg.content
+                <span>{msg.content}</span>
               )}
               {msg.role === "assistant" && (
                 <button

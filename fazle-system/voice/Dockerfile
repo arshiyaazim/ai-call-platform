@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev && \
+    gcc libffi-dev espeak-ng && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

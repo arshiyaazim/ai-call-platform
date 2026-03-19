@@ -10,6 +10,8 @@ import hmac
 import httpx
 import logging
 import os
+import io
+import base64
 from typing import Optional
 from datetime import datetime
 
@@ -50,9 +52,17 @@ class Settings(BaseSettings):
     task_url: str = "http://fazle-task-engine:8400"
     tools_url: str = "http://fazle-web-intelligence:8500"
     trainer_url: str = "http://fazle-trainer:8600"
+    learning_engine_url: str = "http://fazle-learning-engine:8900"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_url: str = "wss://livekit.iamazim.com"
+    # Vision + MinIO
+    openai_api_key: str = ""
+    minio_endpoint: str = "minio:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "fazle-multimodal"
+    minio_secure: bool = False
 
     class Config:
         env_prefix = "FAZLE_"
@@ -383,6 +393,23 @@ async def delete_memory(memory_id: str, auth_user: dict = Depends(verify_auth)):
             raise HTTPException(status_code=502, detail="Memory service unavailable")
 
 
+# ── Multimodal memory search proxy ──────────────────────────
+@app.post("/fazle/memory/search-multimodal")
+async def search_multimodal(request: MemorySearchRequest, auth_user: dict = Depends(verify_auth)):
+    body = request.model_dump(exclude_none=True)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.memory_url}/search-multimodal",
+                json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Multimodal memory search error: {e}")
+            raise HTTPException(status_code=502, detail="Memory service unavailable")
+
+
 # ── Knowledge ingestion proxy ───────────────────────────────
 @app.post("/fazle/knowledge/ingest", dependencies=[Depends(verify_auth)])
 async def ingest_knowledge(request: KnowledgeIngestRequest):
@@ -400,12 +427,99 @@ async def ingest_knowledge(request: KnowledgeIngestRequest):
 
 
 # ── File upload ─────────────────────────────────────────────
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif"}
+
+
+async def _caption_image_gpt4o(image_bytes: bytes, filename: str) -> str:
+    """Send image to GPT-4o vision for captioning."""
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    ext = os.path.splitext(filename)[1].lower().lstrip(".")
+    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif"}.get(ext, "image/jpeg")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Describe this image in rich detail for a personal AI memory system. "
+                                    "Include: what's in the scene, any text/OCR, people's apparent emotions, "
+                                    "colors, objects, location clues, and anything notable. "
+                                    "Be thorough but concise (2-4 sentences)."
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 500,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+def _make_thumbnail(image_bytes: bytes, max_size: int = 256) -> bytes:
+    """Create a JPEG thumbnail from image bytes."""
+    from PIL import Image
+    img = Image.open(io.BytesIO(image_bytes))
+    img.thumbnail((max_size, max_size), Image.LANCZOS)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
+
+
+def _upload_to_minio(object_key: str, data: bytes, content_type: str) -> bool:
+    """Upload bytes to MinIO bucket."""
+    if not settings.minio_access_key or not settings.minio_secret_key:
+        return False
+    try:
+        from minio import Minio
+        client = Minio(
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=settings.minio_secure,
+        )
+        # Ensure bucket exists
+        if not client.bucket_exists(settings.minio_bucket):
+            client.make_bucket(settings.minio_bucket)
+        client.put_object(
+            settings.minio_bucket,
+            object_key,
+            io.BytesIO(data),
+            length=len(data),
+            content_type=content_type,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"MinIO upload failed for {object_key}: {e}")
+        return False
+
+
 @app.post("/fazle/files/upload")
 async def upload_file(
     file: UploadFile = File(...),
     auth_user: dict = Depends(verify_auth),
 ):
-    """Upload a file (PDF, DOCX, TXT, images) for RAG ingestion."""
+    """Upload a file (PDF, DOCX, TXT, images) for RAG ingestion.
+    Images are captioned by GPT-4o, thumbnailed, stored in MinIO,
+    and embedded into the multimodal Qdrant collection."""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -419,14 +533,82 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="File too large (max 20MB)")
 
     user_id = str(auth_user["id"]) if isinstance(auth_user, dict) and auth_user.get("id") != "api-key" else None
+    user_name = auth_user.get("name", "Azim") if isinstance(auth_user, dict) else "Azim"
+    is_image = ext in IMAGE_EXTENSIONS
 
-    # Extract text based on file type
+    if is_image:
+        # ── Image pipeline: GPT-4o caption → thumbnail → MinIO → multimodal store ──
+        # 1. Caption with GPT-4o vision
+        caption = ""
+        try:
+            caption = await _caption_image_gpt4o(contents, file.filename or "image.jpg")
+        except Exception as e:
+            logger.error(f"GPT-4o vision captioning failed: {e}")
+            caption = f"[Image: {file.filename} — captioning unavailable]"
+
+        # 2. Generate thumbnail
+        thumbnail_bytes = b""
+        try:
+            thumbnail_bytes = _make_thumbnail(contents)
+        except Exception as e:
+            logger.warning(f"Thumbnail generation failed: {e}")
+
+        # 3. Upload to MinIO
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        safe_name = (file.filename or "image").replace(" ", "_")
+        object_key = f"images/{ts}_{safe_name}"
+        thumbnail_key = f"thumbnails/{ts}_{safe_name}.thumb.jpg" if thumbnail_bytes else ""
+
+        mime_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif"}.get(ext.lstrip("."), "image/jpeg")
+        minio_ok = _upload_to_minio(object_key, contents, mime_type)
+        if thumbnail_bytes and minio_ok:
+            _upload_to_minio(thumbnail_key, thumbnail_bytes, "image/jpeg")
+
+        # 4. Store in multimodal memory collection
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                store_body = {
+                    "type": "image",
+                    "user": user_name,
+                    "caption": caption,
+                    "object_key": object_key if minio_ok else "",
+                    "thumbnail_key": thumbnail_key if minio_ok else "",
+                    "original_filename": file.filename or "",
+                    "content": {
+                        "size": len(contents),
+                        "mime_type": mime_type,
+                        "minio_stored": minio_ok,
+                    },
+                }
+                if user_id:
+                    store_body["user_id"] = user_id
+                    store_body["uploaded_by"] = user_id
+                resp = await client.post(
+                    f"{settings.memory_url}/store-multimodal",
+                    json=store_body,
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"Multimodal memory store failed: {e}")
+
+        return {
+            "status": "uploaded",
+            "filename": file.filename,
+            "size": len(contents),
+            "type": ext,
+            "text_extracted": True,
+            "caption": caption,
+            "minio_stored": minio_ok,
+            "object_key": object_key if minio_ok else None,
+            "thumbnail_key": thumbnail_key if minio_ok else None,
+        }
+
+    # ── Text document pipeline (PDF, DOCX, TXT) — unchanged ──
     text_content = ""
     if ext == ".txt":
         text_content = contents.decode("utf-8", errors="replace")
     elif ext == ".pdf":
         try:
-            import io
             import PyPDF2
             reader = PyPDF2.PdfReader(io.BytesIO(contents))
             text_content = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -435,16 +617,12 @@ async def upload_file(
             text_content = f"[PDF file: {file.filename} - text extraction failed]"
     elif ext == ".docx":
         try:
-            import io
             import docx
             doc = docx.Document(io.BytesIO(contents))
             text_content = "\n".join(p.text for p in doc.paragraphs)
         except Exception as e:
             logger.warning(f"DOCX extraction failed: {e}")
             text_content = f"[DOCX file: {file.filename} - text extraction failed]"
-    else:
-        # Image files — store metadata
-        text_content = f"[Uploaded image: {file.filename}]"
 
     # Ingest extracted text into memory/knowledge
     if text_content.strip():
@@ -542,6 +720,7 @@ async def system_status():
         "tasks": settings.task_url,
         "tools": settings.tools_url,
         "trainer": settings.trainer_url,
+        "learning_engine": settings.learning_engine_url,
     }
     results = {}
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -564,3 +743,38 @@ async def view_audit_log(
     """View audit trail. Admin only."""
     logs = get_audit_logs(limit=min(limit, 500), action_filter=action)
     return {"logs": logs}
+
+
+# ── Persona insights (admin only) ──────────────────────────
+@app.get("/fazle/persona/insights")
+async def persona_insights(admin: dict = Depends(require_admin)):
+    """View persona evolution insights, emotional patterns, contradictions,
+    and preference drifts from nightly reflections. Admin only."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(
+                f"{settings.learning_engine_url}/persona/insights",
+            )
+            resp.raise_for_status()
+            log_action(admin, "view_persona_insights", target_type="persona")
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Learning engine error: {e}")
+            raise HTTPException(status_code=502, detail="Learning engine unavailable")
+
+
+@app.post("/fazle/persona/reflect")
+async def trigger_reflection(admin: dict = Depends(require_admin)):
+    """Trigger a nightly reflection run manually. Admin only."""
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.learning_engine_url}/reflect",
+            )
+            resp.raise_for_status()
+            log_action(admin, "trigger_reflection", target_type="persona",
+                       detail=f"Run ID: {resp.json().get('run_id', 'unknown')}")
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Reflection trigger error: {e}")
+            raise HTTPException(status_code=502, detail="Learning engine unavailable")

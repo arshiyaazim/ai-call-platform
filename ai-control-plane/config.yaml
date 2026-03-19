@@ -1,0 +1,81 @@
+# AI Control Plane Configuration
+
+check_interval: 900
+
+# Ollama
+ollama_model: "qwen2.5:0.5b"
+
+# Thresholds
+disk_warning: 75
+disk_critical: 85
+cpu_critical: 90
+memory_warning_gb: 6.5
+
+# Queue
+redis_db: 5
+redis_stream: "llm_requests"
+queue_scale_up: 50
+queue_scale_down: 10
+workers_min: 2
+workers_max: 4
+
+# Repair whitelist — only these actions are allowed
+allowed_actions:
+  - "restart_container"
+  - "rebuild_service"
+  - "redeploy_service"
+  - "scale_workers"
+  - "clean_docker"
+
+# Protected containers — never delete, only restart for repair
+protected_containers:
+  - "ai-postgres"
+  - "ai-redis"
+  - "qdrant"
+  - "minio"
+
+# Containers to monitor
+monitored_containers:
+  - "ai-postgres"
+  - "ai-redis"
+  - "minio"
+  - "qdrant"
+  - "ollama"
+  - "grafana"
+  - "loki"
+  - "prometheus"
+  - "promtail"
+  - "cadvisor"
+  - "node-exporter"
+  - "fazle-api"
+  - "fazle-brain"
+  - "fazle-memory"
+  - "fazle-llm-gateway"
+  - "fazle-voice"
+  - "fazle-ui"
+  - "fazle-queue"
+  - "fazle-task-engine"
+  - "fazle-trainer"
+  - "fazle-learning-engine"
+  - "fazle-web-intelligence"
+  - "livekit"
+  - "coturn"
+  - "cloudflared-tunnel"
+  - "dograh-api"
+  - "dograh-ui"
+  - "ai-watchdog"
+
+# Log analysis targets
+log_containers:
+  - "fazle-api"
+  - "fazle-voice"
+  - "fazle-brain"
+  - "fazle-llm-gateway"
+  - "fazle-queue"
+
+# Daily report path
+report_dir: "/var/log/ai-infra-reports"
+
+# Safety limits
+max_repairs_per_hour: 5
+max_restarts_per_container_per_hour: 2

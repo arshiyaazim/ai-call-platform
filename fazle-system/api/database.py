@@ -33,8 +33,13 @@ _DSN = db_settings.database_url
 _pool = psycopg2.pool.ThreadedConnectionPool(2, 10, _DSN)
 
 
+@contextmanager
 def _get_conn():
-    return _pool.getconn()
+    conn = _pool.getconn()
+    try:
+        yield conn
+    finally:
+        _pool.putconn(conn)
 
 
 def _put_conn(conn):

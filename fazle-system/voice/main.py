@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     livekit_url: str = "ws://livekit:7880"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
+    fast_mode: bool = True
 
     class Config:
         env_prefix = "FAZLE_VOICE_"
@@ -84,13 +85,64 @@ async def query_brain(message: str, user_id: str, user_name: str, relationship: 
             return "Sorry, I'm having trouble thinking right now. Give me a moment."
 
 
+# Keywords that signal a complex query needing full AI pipeline
+_COMPLEX_KEYWORDS = frozenset([
+    "remember", "schedule", "remind", "search", "find", "look up",
+    "what did i", "what do you know", "tell me about", "who is",
+    "create", "set up", "configure",
+])
+
+
+def route_query(message: str) -> str:
+    """Decide endpoint: /chat/agent/stream (agent pipeline) or /chat/fast (ultra-low latency).
+    Returns the endpoint path to use."""
+    if not settings.fast_mode:
+        return "/chat/agent/stream"
+    msg_lower = message.lower()
+    if any(kw in msg_lower for kw in _COMPLEX_KEYWORDS):
+        return "/chat/agent/stream"
+    # Short conversational messages → fast path
+    return "/chat/fast"
+
+
+async def query_brain_fast(message: str):
+    """Stream from Brain /chat/fast — ultra-low latency, no preprocessing."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            async with client.stream(
+                "POST",
+                f"{BRAIN_URL}/chat/fast",
+                json={"message": message, "source": "voice"},
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        chunk_str = line[6:].strip()
+                        if not chunk_str:
+                            continue
+                        try:
+                            chunk = json.loads(chunk_str)
+                            text = chunk.get("content", "")
+                            done = chunk.get("done", False)
+                            if text:
+                                yield text
+                            if done:
+                                break
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.error(f"Brain fast stream failed, falling back to agent stream: {e}")
+            async for text in query_brain_stream(message, "", "", "self"):
+                yield text
+
+
 async def query_brain_stream(message: str, user_id: str, user_name: str, relationship: str):
-    """Stream response from Fazle Brain /chat/stream endpoint. Yields text chunks."""
+    """Stream response from Fazle Brain /chat/agent/stream endpoint. Yields text chunks."""
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             async with client.stream(
                 "POST",
-                f"{BRAIN_URL}/chat/stream",
+                f"{BRAIN_URL}/chat/agent/stream",
                 json={
                     "message": message,
                     "user": user_name,
@@ -148,7 +200,12 @@ class FazleLLM(llm.LLM):
                 last_message = msg.content
                 break
 
-        # Use streaming endpoint for lower TTFB
+        # Smart routing: fast path for simple queries, full agent pipeline for complex
+        endpoint = route_query(last_message)
+        if endpoint == "/chat/fast":
+            return _FastBrainResponse(last_message, chat_ctx)
+
+        # Full agent pipeline via /chat/agent/stream
         return _StreamingBrainResponse(
             last_message,
             self._user_id,
@@ -177,6 +234,33 @@ class _StreamingBrainResponse(llm.LLMStream):
             self._gen = query_brain_stream(
                 self._message, self._user_id, self._user_name, self._relationship
             )
+        try:
+            text = await self._gen.__anext__()
+            delta = llm.ChoiceDelta(role="assistant", content=text)
+            choice = llm.Choice(delta=delta, index=0)
+            return llm.ChatChunk(choices=[choice])
+        except StopAsyncIteration:
+            self._done = True
+            raise
+
+    async def aclose(self):
+        self._done = True
+
+
+class _FastBrainResponse(llm.LLMStream):
+    """Streams text chunks from Brain /chat/fast (ultra-low latency)."""
+
+    def __init__(self, message: str, chat_ctx: llm.ChatContext):
+        super().__init__(chat_ctx=chat_ctx)
+        self._message = message
+        self._gen = None
+        self._done = False
+
+    async def __anext__(self) -> llm.ChatChunk:
+        if self._done:
+            raise StopAsyncIteration
+        if self._gen is None:
+            self._gen = query_brain_fast(self._message)
         try:
             text = await self._gen.__anext__()
             delta = llm.ChoiceDelta(role="assistant", content=text)

@@ -4,6 +4,7 @@
 # and stores results. Horizontally scalable via replicas.
 # ============================================================
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter, Histogram, Gauge
@@ -315,13 +316,14 @@ async def health():
         checks["consumer"] = "stopped"
         healthy = False
 
-    return {
+    body = {
         "status": "healthy" if healthy else "degraded",
         "service": "fazle-worker",
         "worker_name": settings.consumer_name,
         "checks": checks,
         "timestamp": datetime.utcnow().isoformat(),
     }
+    return JSONResponse(content=body, status_code=200 if healthy else 503)
 
 
 @app.get("/worker/stats")

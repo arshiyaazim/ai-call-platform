@@ -20,6 +20,8 @@ from datetime import datetime
 from memory_manager import conversation_get, conversation_set
 from persona_engine import build_system_prompt, build_system_prompt_async
 from safety import check_content
+from agents import AgentManager, AgentContext
+from agents.manager import QueryRoute
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fazle-brain")
@@ -39,7 +41,9 @@ class Settings(BaseSettings):
     use_llm_gateway: bool = True
     # Voice fast mode: bypass gateway, use Ollama, reduce top_k, skip batching
     voice_fast_mode: bool = False
-    voice_ollama_model: str = "qwen2.5:3b"
+    voice_ollama_model: str = "qwen2.5:0.5b"
+    # Ultra-fast voice model (tiny, for <500ms TTFB)
+    voice_fast_model: str = "qwen2.5:0.5b"
     # Persona cache TTL in seconds (0 = disabled)
     persona_cache_ttl: int = 300
     redis_url: str = "redis://redis:6379/1"
@@ -50,9 +54,40 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-app = FastAPI(title="Fazle Brain — Reasoning Engine", version="1.0.0")
+# Shared HTTP client for ultra-fast Ollama calls (avoids per-request connection setup)
+_fast_ollama_client: httpx.AsyncClient | None = None
+
+
+def _get_fast_client() -> httpx.AsyncClient:
+    global _fast_ollama_client
+    if _fast_ollama_client is None or _fast_ollama_client.is_closed:
+        _fast_ollama_client = httpx.AsyncClient(
+            base_url=settings.ollama_url,
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0),
+        )
+    return _fast_ollama_client
+
+
+app = FastAPI(title="Fazle Brain — Reasoning Engine", version="2.0.0")
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+# ── Agent Manager (multi-agent orchestration) ───────────────
+agent_manager: AgentManager | None = None
+
+
+@app.on_event("startup")
+async def init_agents():
+    global agent_manager
+    agent_manager = AgentManager(
+        ollama_url=settings.ollama_url,
+        voice_fast_model=settings.voice_fast_model,
+        llm_gateway_url=settings.llm_gateway_url,
+        memory_url=settings.memory_url,
+        tools_url=settings.tools_url,
+        task_url=settings.task_url,
+    )
+    logger.info("Agent Manager initialized with 5 agents")
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://fazle.iamazim.com,https://iamazim.com,http://localhost:3020").split(",")
 
@@ -213,8 +248,7 @@ async def stream_llm_gateway(messages: list[dict]):
                 f"{settings.llm_gateway_url}/generate",
                 json={
                     "messages": messages,
-                    "response_format": "json",
-                    "caller": "fazle-brain",
+                    "caller": "fazle-brain-stream",
                     "temperature": 0.7,
                     "stream": True,
                 },
@@ -222,14 +256,62 @@ async def stream_llm_gateway(messages: list[dict]):
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if line.startswith("data: "):
-                        chunk_str = line[6:]
-                        if chunk_str.strip() == "[DONE]":
+                        chunk_str = line[6:].strip()
+                        if chunk_str == "[DONE]":
                             yield json.dumps({"content": "", "done": True}) + "\n"
                             break
-                        yield json.dumps({"content": chunk_str, "done": False}) + "\n"
+                        try:
+                            chunk_data = json.loads(chunk_str)
+                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                            text = delta.get("content", "")
+                            yield json.dumps({"content": text, "done": False}) + "\n"
+                        except (json.JSONDecodeError, IndexError, KeyError):
+                            yield json.dumps({"content": chunk_str, "done": False}) + "\n"
     except Exception as e:
         logger.error(f"Gateway stream failed: {e}")
         yield json.dumps({"content": "", "done": True, "error": str(e)}) + "\n"
+
+
+# Minimal system prompt for ultra-fast voice path (no JSON, no tools)
+FAST_VOICE_PROMPT = (
+    "You are Azim's AI assistant. Respond naturally in 1-2 sentences. "
+    "Be concise, warm, and direct. Plain text only."
+)
+
+
+async def stream_ollama_fast(prompt: str):
+    """Ultra-fast Ollama streaming via /api/generate — skips chat overhead."""
+    try:
+        client = _get_fast_client()
+        async with client.stream(
+            "POST",
+            "/api/generate",
+            json={
+                "model": settings.voice_fast_model,
+                "prompt": prompt,
+                "system": FAST_VOICE_PROMPT,
+                "stream": True,
+                "options": {"num_ctx": 512, "num_predict": 40},
+            },
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.strip():
+                    data = json.loads(line)
+                    chunk = data.get("response", "")
+                    done = data.get("done", False)
+                    yield json.dumps({"content": chunk, "done": done}) + "\n"
+                    if done:
+                        break
+    except Exception as e:
+        logger.error(f"Fast Ollama stream failed, falling back to gateway: {e}")
+        # Fallback: use gateway with minimal messages
+        messages = [
+            {"role": "system", "content": FAST_VOICE_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        async for chunk in stream_llm_gateway(messages):
+            yield chunk
 
 
 async def retrieve_memories(query: str, memory_type: Optional[str] = None, user_id: Optional[str] = None, limit: int = 5) -> list[dict]:
@@ -561,6 +643,15 @@ async def chat_stream(request: StreamChatRequest):
 
     system_prompt, memories = await asyncio.gather(system_prompt_task, mem_task)
 
+    # For voice streaming, override the response format instruction:
+    # Remove JSON formatting requirement and ask for plain spoken text
+    voice_override = (
+        "\n\nIMPORTANT: This is a voice conversation. "
+        "Respond with ONLY your spoken reply as plain text. "
+        "Do NOT use JSON format. Do NOT include memory_updates or actions. "
+        "Keep responses concise (1-3 sentences) for natural voice delivery."
+    )
+
     memory_context = ""
     if memories:
         memory_context = "\n\nRelevant memories:\n" + "\n".join(
@@ -569,7 +660,7 @@ async def chat_stream(request: StreamChatRequest):
 
     history = conversation_get(conversation_id)
     messages = [
-        {"role": "system", "content": system_prompt + memory_context},
+        {"role": "system", "content": system_prompt + voice_override + memory_context},
         *history[-6:],
         {"role": "user", "content": request.message},
     ]
@@ -596,3 +687,262 @@ async def chat_stream(request: StreamChatRequest):
         media_type="text/event-stream",
         headers={"X-Conversation-Id": conversation_id},
     )
+
+
+# ── Ultra-Fast Chat endpoint (for voice, <500ms TTFB) ──────
+class FastChatRequest(BaseModel):
+    message: str
+    source: str = "voice"
+
+
+@app.post("/chat/fast")
+async def chat_fast(request: FastChatRequest):
+    """Ultra-fast streaming: zero preprocessing, direct Ollama /api/generate.
+    Skips persona, memory, moderation, conversation history.
+    Target: <500ms TTFB on CPU with qwen2.5:0.5b."""
+
+    async def event_stream():
+        async for chunk in stream_ollama_fast(request.message):
+            yield f"data: {chunk}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+    )
+
+
+# ── Smart Router endpoint ──────────────────────────────────
+class RouteRequest(BaseModel):
+    message: str
+    source: str = "text"
+
+
+@app.post("/route")
+async def route_query(request: RouteRequest):
+    """Classify a query and return the recommended route."""
+    route = agent_manager.route_query(request.message, request.source)
+    return {"message": request.message, "route": route.value, "source": request.source}
+
+
+# ── Agent-powered Chat (full pipeline) ─────────────────────
+class AgentChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    user: str = "Azim"
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    relationship: Optional[str] = None
+    source: str = "text"
+
+
+@app.post("/chat/agent")
+async def chat_agent(request: AgentChatRequest):
+    """Multi-agent chat: routes through smart router, runs agents,
+    enriches context, then generates LLM response."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    user_name = request.user_name or request.user or "Azim"
+    relationship = request.relationship or "self"
+
+    # Build agent context
+    ctx = AgentContext(
+        message=request.message,
+        user_name=user_name,
+        user_id=request.user_id,
+        relationship=relationship,
+        conversation_id=conversation_id,
+        metadata={"source": request.source},
+    )
+
+    # Smart routing
+    route = agent_manager.route_query(request.message, request.source)
+
+    # Run agent pipeline
+    agent_result = await agent_manager.process(ctx, route)
+
+    # If fast voice, agent already generated the reply
+    if route == QueryRoute.FAST_VOICE and agent_result.get("reply"):
+        return {
+            "reply": agent_result["reply"],
+            "conversation_id": conversation_id,
+            "route": route.value,
+            "agents_used": agent_result["agents_used"],
+        }
+
+    # For conversation and full pipeline, use LLM with enriched context
+    system_prompt = await build_system_prompt_async(
+        user_name=user_name,
+        relationship=relationship,
+        user_id=request.user_id,
+        learning_engine_url=settings.learning_engine_url,
+    )
+
+    # Build enriched context from agent results
+    enriched_parts = []
+    if ctx.memories:
+        enriched_parts.append("Relevant memories:")
+        for m in ctx.memories[:5]:
+            enriched_parts.append(f"- {m.get('text', '')}")
+    if ctx.search_results:
+        enriched_parts.append("\nWeb search results:")
+        for r in ctx.search_results[:3]:
+            enriched_parts.append(f"- {r.get('title', '')}: {r.get('snippet', '')}")
+    if ctx.tool_results:
+        enriched_parts.append("\nTool results:")
+        for t in ctx.tool_results[:3]:
+            enriched_parts.append(f"- {json.dumps(t)}")
+
+    enriched_context = "\n".join(enriched_parts) if enriched_parts else ""
+
+    history = conversation_get(conversation_id)
+    messages = [
+        {"role": "system", "content": system_prompt + "\n" + enriched_context},
+        *history[-10:],
+        {"role": "user", "content": request.message},
+    ]
+
+    try:
+        result = await query_llm(messages)
+    except Exception as e:
+        logger.error(f"Agent LLM error: {e}")
+        raise HTTPException(status_code=502, detail="LLM service unavailable")
+
+    reply = result.get("reply", "I'm not sure how to respond to that.")
+    memory_updates = result.get("memory_updates", [])
+    actions = result.get("actions", [])
+
+    # Update conversation history
+    history.append({"role": "user", "content": request.message})
+    history.append({"role": "assistant", "content": reply})
+    conversation_set(conversation_id, history)
+
+    # Process side effects
+    if memory_updates:
+        await store_memory_updates(memory_updates, user_id=request.user_id, user_name=user_name)
+    if actions:
+        await execute_actions(actions)
+
+    return {
+        "reply": reply,
+        "conversation_id": conversation_id,
+        "route": route.value,
+        "agents_used": agent_result.get("agents_used", []),
+        "memory_updates": memory_updates,
+    }
+
+
+# ── Agent-powered Streaming Chat ───────────────────────────
+@app.post("/chat/agent/stream")
+async def chat_agent_stream(request: AgentChatRequest):
+    """Streaming multi-agent chat: smart router selects pipeline,
+    agents enrich context, then LLM streams response."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    user_name = request.user_name or request.user or "Azim"
+    relationship = request.relationship or "self"
+
+    ctx = AgentContext(
+        message=request.message,
+        user_name=user_name,
+        user_id=request.user_id,
+        relationship=relationship,
+        conversation_id=conversation_id,
+        metadata={"source": request.source},
+    )
+
+    route = agent_manager.route_query(request.message, request.source)
+
+    # Fast voice: stream directly from conversation agent
+    if route == QueryRoute.FAST_VOICE:
+        async def fast_stream():
+            async for chunk in agent_manager.stream_fast(ctx):
+                yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
+
+        return StreamingResponse(
+            fast_stream(),
+            media_type="text/event-stream",
+            headers={"X-Conversation-Id": conversation_id, "X-Route": route.value},
+        )
+
+    # Full/Conversation: run agents first, then stream LLM
+    agent_result = await agent_manager.process(ctx, route)
+
+    system_prompt = await build_system_prompt_async(
+        user_name=user_name,
+        relationship=relationship,
+        user_id=request.user_id,
+        learning_engine_url=settings.learning_engine_url,
+    )
+
+    voice_override = (
+        "\n\nIMPORTANT: This is a voice conversation. "
+        "Respond with ONLY your spoken reply as plain text. "
+        "Do NOT use JSON format. Keep responses concise (1-3 sentences)."
+    )
+
+    enriched_parts = []
+    if ctx.memories:
+        enriched_parts.append("Relevant memories:")
+        for m in ctx.memories[:3]:
+            enriched_parts.append(f"- {m.get('text', '')}")
+    if ctx.search_results:
+        enriched_parts.append("\nSearch results:")
+        for r in ctx.search_results[:3]:
+            enriched_parts.append(f"- {r.get('title', '')}: {r.get('snippet', '')}")
+
+    enriched_context = "\n".join(enriched_parts) if enriched_parts else ""
+
+    history = conversation_get(conversation_id)
+    messages = [
+        {"role": "system", "content": system_prompt + voice_override + "\n" + enriched_context},
+        *history[-6:],
+        {"role": "user", "content": request.message},
+    ]
+
+    if settings.voice_fast_mode:
+        stream_gen = stream_llm_voice(messages)
+    else:
+        stream_gen = stream_llm_gateway(messages)
+
+    async def event_stream():
+        full_reply = []
+        async for chunk in stream_gen:
+            full_reply.append(json.loads(chunk).get("content", ""))
+            yield f"data: {chunk}\n\n"
+        reply_text = "".join(full_reply)
+        history.append({"role": "user", "content": request.message})
+        history.append({"role": "assistant", "content": reply_text})
+        conversation_set(conversation_id, history)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "X-Conversation-Id": conversation_id,
+            "X-Route": route.value,
+            "X-Agents-Used": ",".join(agent_result.get("agents_used", [])),
+        },
+    )
+
+
+# ── System Status endpoint ─────────────────────────────────
+@app.get("/status")
+async def system_status():
+    """Return comprehensive system status including agent info."""
+    agents_info = []
+    if agent_manager:
+        for agent in agent_manager.agents:
+            agents_info.append({
+                "name": agent.name,
+                "description": agent.description,
+            })
+
+    return {
+        "service": "fazle-brain",
+        "version": "2.0.0",
+        "llm_provider": settings.llm_provider,
+        "voice_fast_mode": settings.voice_fast_mode,
+        "voice_fast_model": settings.voice_fast_model,
+        "agents": agents_info,
+        "routes": [r.value for r in QueryRoute],
+        "timestamp": datetime.utcnow().isoformat(),
+    }

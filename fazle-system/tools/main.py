@@ -257,3 +257,53 @@ async def summarize(request: SummarizeRequest):
         "source": request.url or "direct_input",
         "stored_in_knowledge": True,
     }
+
+
+# ── Plugin System ───────────────────────────────────────────
+from plugins import registry as plugin_registry
+from plugins.web_search_plugin import WebSearchPlugin
+from plugins.filesystem_plugin import FilesystemPlugin
+from plugins.code_execution_plugin import CodeExecutionPlugin
+
+
+@app.on_event("startup")
+async def load_plugins():
+    """Load all built-in and directory plugins at startup."""
+    # Register built-in plugins (directory ones auto-load)
+    plugin_registry.register(WebSearchPlugin(
+        serper_api_key=settings.serper_api_key,
+        tavily_api_key=settings.tavily_api_key,
+    ))
+    plugin_registry.register(FilesystemPlugin())
+    plugin_registry.register(CodeExecutionPlugin())
+
+    # Auto-load any plugins from the plugins directory
+    plugin_dir = os.path.join(os.path.dirname(__file__), "plugins")
+    plugin_registry.load_from_directory(plugin_dir)
+
+    logger.info(f"Loaded {len(plugin_registry.list_plugins())} plugins")
+
+
+@app.get("/plugins")
+async def list_plugins():
+    """List all available tool plugins with their schemas."""
+    return {"tools": plugin_registry.list_plugins()}
+
+
+class PluginExecuteRequest(BaseModel):
+    tool: str
+    params: dict = {}
+    user_id: Optional[str] = None
+
+
+@app.post("/plugins/execute")
+async def execute_plugin(request: PluginExecuteRequest):
+    """Execute a tool plugin by name."""
+    try:
+        result = await plugin_registry.execute(request.tool, **request.params)
+        return {"tool": request.tool, "result": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Plugin execution error: {e}")
+        raise HTTPException(status_code=500, detail="Plugin execution failed")

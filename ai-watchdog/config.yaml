@@ -1,0 +1,49 @@
+check_interval: 30
+
+disk_warning: 75
+disk_critical: 85
+
+queue_scale_up: 50
+queue_scale_down: 10
+
+workers_min: 2
+workers_max: 4
+
+redis_db: 5
+redis_stream: "llm_requests"
+
+compose_file: "/host/fazle-ai/docker-compose.yaml"
+env_file: "/host/.env"
+
+log_containers:
+  - "fazle-api"
+  - "fazle-voice"
+
+monitored_containers:
+  - "ai-postgres"
+  - "ai-redis"
+  - "minio"
+  - "qdrant"
+  - "ollama"
+  - "grafana"
+  - "loki"
+  - "prometheus"
+  - "promtail"
+  - "cadvisor"
+  - "node-exporter"
+  - "fazle-api"
+  - "fazle-brain"
+  - "fazle-memory"
+  - "fazle-llm-gateway"
+  - "fazle-voice"
+  - "fazle-ui"
+  - "fazle-queue"
+  - "fazle-task-engine"
+  - "fazle-trainer"
+  - "fazle-learning-engine"
+  - "fazle-web-intelligence"
+  - "livekit"
+  - "coturn"
+  - "cloudflared-tunnel"
+  - "dograh-api"
+  - "dograh-ui"

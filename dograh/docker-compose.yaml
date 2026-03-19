@@ -1,0 +1,109 @@
+# ============================================================
+# Dograh Voice Agent Stack — Platform Services Only
+# Pre-built Dograh API + UI
+# ============================================================
+# DEPLOY ORDER: 2 (start AFTER ai-infra)
+# Usage: docker compose --env-file ../.env up -d
+# ============================================================
+# DO NOT MODIFY dograhai/dograh-api or dograhai/dograh-ui images
+# ============================================================
+
+services:
+  # ── Dograh API — FastAPI Backend (DO NOT MODIFY) ───────────
+  api:
+    image: ${REGISTRY:-dograhai}/dograh-api:${DOGRAH_API_VERSION:-1.0.0}
+    container_name: dograh-api
+    restart: unless-stopped
+    volumes:
+      - shared-tmp:/tmp
+      - ../personality:/app/personality:ro
+    environment:
+      ENVIRONMENT: "production"
+      LOG_LEVEL: "INFO"
+      BACKEND_API_ENDPOINT: "${BACKEND_API_ENDPOINT:-https://iamazim.com}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}@postgres:5432/${POSTGRES_DB:-postgres}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379"
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY not set}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY not set}"
+      MINIO_BUCKET: "voice-audio"
+      MINIO_SECURE: "false"
+      FASTAPI_WORKERS: 2
+      ENABLE_TRACING: "false"
+      TURN_HOST: "${TURN_HOST:-turn.iamazim.com}"
+      TURN_SECRET: "${TURN_SECRET:?TURN_SECRET not set}"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY not set}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}"
+      LIVEKIT_WS_URL: "wss://livekit.iamazim.com"
+      OSS_JWT_SECRET: "${OSS_JWT_SECRET:?OSS_JWT_SECRET not set}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Cross-compose deps (postgres, redis, minio, livekit) handled by
+    # restart policy + healthcheck. Start ai-infra stack FIRST.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      app-network:
+        aliases:
+          - api
+          - dograh-api
+      db-network:
+        aliases:
+          - api
+
+  # ── Dograh UI — Next.js Dashboard (DO NOT MODIFY) ────────
+  ui:
+    image: ${REGISTRY:-dograhai}/dograh-ui:${DOGRAH_UI_VERSION:-1.0.0}
+    container_name: dograh-ui
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/app/scripts/ui-entrypoint.sh"]
+    command: []
+    volumes:
+      - ../scripts/ui-entrypoint.sh:/app/scripts/ui-entrypoint.sh:ro
+    environment:
+      HOSTNAME: "0.0.0.0"
+      BACKEND_URL: "${BACKEND_URL:-http://api:8000}"
+      BACKEND_API_ENDPOINT: "${BACKEND_API_ENDPOINT:-https://api.iamazim.com}"
+      NODE_ENV: "oss"
+      ENABLE_TELEMETRY: "false"
+      PORT: "3010"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:3010:3010"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3010 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - app-network
+
+volumes:
+  shared-tmp:
+    name: ai-call-platform_shared-tmp
+    driver: local
+
+networks:
+  app-network:
+    external: true
+  db-network:
+    external: true

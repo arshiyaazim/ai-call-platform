@@ -160,12 +160,79 @@ else
 fi
 
 echo ""
+echo "=== PHASE 6 — THREE-STACK LAYOUT ==="
+
+# P6-1: Three-stack compose files exist
+for stack in ai-infra dograh fazle-ai; do
+    if [ -f "$stack/docker-compose.yaml" ]; then
+        echo "  [PASS] P6-STACK: $stack/docker-compose.yaml exists"
+        FIXED=$((FIXED+1))
+    else
+        echo "  [FAIL] P6-STACK: $stack/docker-compose.yaml missing"
+        ERRORS=$((ERRORS+1))
+    fi
+done
+
+# P6-2: restart: unless-stopped in all three stacks
+for stack in ai-infra dograh fazle-ai; do
+    if [ -f "$stack/docker-compose.yaml" ]; then
+        BAD=$(grep -c 'restart: always' "$stack/docker-compose.yaml" 2>/dev/null || echo 0)
+        if [ "$BAD" -eq 0 ]; then
+            echo "  [PASS] P6-RESTART: $stack uses unless-stopped"
+            FIXED=$((FIXED+1))
+        else
+            echo "  [FAIL] P6-RESTART: $stack has $BAD services with restart: always"
+            ERRORS=$((ERRORS+1))
+        fi
+    fi
+done
+
+# P6-3: Redis persistence flags
+if grep -q 'appendfsync everysec' ai-infra/docker-compose.yaml 2>/dev/null; then
+    echo "  [PASS] P6-REDIS: AOF appendfsync enabled"
+    FIXED=$((FIXED+1))
+else
+    echo "  [FAIL] P6-REDIS: Missing appendfsync in Redis config"
+    ERRORS=$((ERRORS+1))
+fi
+
+# P6-4: Grafana dashboard provisioning
+if [ -f "configs/grafana/provisioning/dashboards/dashboards.yml" ]; then
+    echo "  [PASS] P6-GRAFANA: Dashboard provisioning configured"
+    FIXED=$((FIXED+1))
+else
+    echo "  [FAIL] P6-GRAFANA: Missing dashboard provisioning"
+    ERRORS=$((ERRORS+1))
+fi
+
+# P6-5: Stack management scripts exist
+for script in create-networks.sh stack-up.sh stack-down.sh stack-status.sh; do
+    if [ -f "scripts/$script" ]; then
+        echo "  [PASS] P6-SCRIPTS: scripts/$script exists"
+        FIXED=$((FIXED+1))
+    else
+        echo "  [FAIL] P6-SCRIPTS: scripts/$script missing"
+        ERRORS=$((ERRORS+1))
+    fi
+done
+
+# P6-6: Health endpoints return proper HTTP status codes
+if grep -q 'JSONResponse' fazle-system/queue/main.py 2>/dev/null && \
+   grep -q 'JSONResponse' fazle-system/workers/main.py 2>/dev/null; then
+    echo "  [PASS] P6-HEALTH: Queue/Workers return proper HTTP status codes"
+    FIXED=$((FIXED+1))
+else
+    echo "  [FAIL] P6-HEALTH: Queue/Workers missing JSONResponse for health"
+    ERRORS=$((ERRORS+1))
+fi
+
+echo ""
 echo "=== SUMMARY ==="
-echo "  Fixed: $FIXED / 16 checks"
+echo "  Fixed: $FIXED checks passed"
 echo "  Errors: $ERRORS"
 echo ""
 if [ $ERRORS -eq 0 ]; then
-    echo "  ALL 18 FINDINGS REMEDIATED — Safe to deploy"
+    echo "  ALL CHECKS PASSED — Safe to deploy"
 else
     echo "  $ERRORS ISSUES REMAIN — Do not deploy"
 fi

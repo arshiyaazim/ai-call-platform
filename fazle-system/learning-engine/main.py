@@ -125,7 +125,25 @@ async def ensure_tables():
                 summary TEXT DEFAULT ''
             );
         """)
-    logger.info("Learning engine tables verified")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS fazle_persona_evolution (
+                id VARCHAR(36) PRIMARY KEY,
+                relationship VARCHAR(50) NOT NULL,
+                dimension VARCHAR(100) NOT NULL,
+                old_value TEXT DEFAULT '',
+                new_value TEXT NOT NULL,
+                reason TEXT DEFAULT '',
+                confidence REAL NOT NULL DEFAULT 0.0,
+                reflection_run_id VARCHAR(36),
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_persona_evo_rel
+                ON fazle_persona_evolution(relationship);
+            CREATE INDEX IF NOT EXISTS idx_persona_evo_active
+                ON fazle_persona_evolution(active, relationship);
+        """)
+    logger.info("Learning engine tables verified (incl. persona_evolution)")
 
 
 @app.on_event("startup")
@@ -704,8 +722,12 @@ async def learning_stats():
         total_corrections = await conn.fetchval("SELECT COUNT(*) FROM fazle_corrections")
         applied_corrections = await conn.fetchval("SELECT COUNT(*) FROM fazle_corrections WHERE applied = TRUE")
         total_people = await conn.fetchval("SELECT COUNT(*) FROM fazle_relationship_graph")
+        total_evolutions = await conn.fetchval("SELECT COUNT(*) FROM fazle_persona_evolution WHERE active = TRUE")
         last_run = await conn.fetchrow(
             "SELECT started_at, status, summary FROM fazle_learning_runs ORDER BY started_at DESC LIMIT 1"
+        )
+        last_reflection = await conn.fetchrow(
+            "SELECT started_at, status, summary FROM fazle_learning_runs WHERE run_type = 'reflection' ORDER BY started_at DESC LIMIT 1"
         )
 
     return {
@@ -713,5 +735,440 @@ async def learning_stats():
         "total_corrections": total_corrections,
         "applied_corrections": applied_corrections,
         "people_in_graph": total_people,
+        "active_persona_evolutions": total_evolutions,
         "last_run": dict(last_run) if last_run else None,
+        "last_reflection": dict(last_reflection) if last_reflection else None,
     }
+
+
+# ── Reflection System ─────────────────────────────────────
+
+REFLECTION_PROMPT = """You are a deep reflection and persona analysis engine for a personal AI named Azim.
+
+You are given conversation transcripts from the past 24 hours across different family members.
+Your task is to analyze them holistically and produce:
+
+1. **Insights**: Key observations about Azim's life, relationships, mood patterns, priorities
+2. **Contradictions**: Any inconsistencies between what Azim says to different people or over time
+3. **Preference drifts**: Changes in preferences, interests, or habits compared to what was previously known
+4. **Emotional patterns**: Recurring emotional states, stress indicators, joy triggers
+5. **Persona adjustments**: Recommended changes to how Azim's AI should communicate with each family member
+
+For persona adjustments, consider these dimensions:
+- **tone**: overall emotional tone (e.g., "warmer", "more playful", "more serious")
+- **initiative_level**: how proactive vs reactive to be (0.0=passive, 1.0=highly proactive)
+- **humor**: humor frequency (0.0=none, 1.0=frequent jokes/playfulness)
+- **affection**: warmth/affection level (0.0=formal, 1.0=very affectionate)
+- **memory_weight**: how much to reference past conversations (0.0=minimal, 1.0=heavy)
+- **verbosity**: response length preference (0.0=terse, 1.0=elaborate)
+- **prompt_override**: specific prompt text additions/modifications
+
+Respond in JSON:
+{
+  "insights": [{"text": "...", "category": "life|relationship|mood|priority", "confidence": 0.0-1.0}],
+  "contradictions": [{"text": "...", "between": "self vs wife", "severity": "low|medium|high"}],
+  "preference_drifts": [{"dimension": "...", "old_pattern": "...", "new_pattern": "...", "confidence": 0.0-1.0}],
+  "emotional_patterns": [{"pattern": "...", "frequency": "...", "trigger": "..."}],
+  "persona_adjustments": [
+    {
+      "relationship": "self|wife|daughter|son|parent|sibling",
+      "dimension": "tone|initiative_level|humor|affection|memory_weight|verbosity|prompt_override",
+      "current_value": "...",
+      "recommended_value": "...",
+      "reason": "...",
+      "confidence": 0.0-1.0
+    }
+  ],
+  "summary": "brief overall reflection summary"
+}"""
+
+
+@app.post("/reflect")
+async def nightly_reflection():
+    """Perform deep reflection on recent conversations across all users.
+    Extracts insights, contradictions, preference drifts, emotional patterns,
+    and generates persona evolution recommendations.
+    Intended to be called nightly by the task engine."""
+    run_id = str(uuid.uuid4())
+    pool = await get_pool()
+    r = _get_redis()
+
+    # Log run start
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO fazle_learning_runs (id, run_type, status)
+               VALUES ($1, 'reflection', 'running')""",
+            run_id,
+        )
+
+    try:
+        # Gather recent conversations from DB (last 24h, across all users)
+        async with pool.acquire() as conn:
+            conversations = await conn.fetch("""
+                SELECT m.role, m.content, m.created_at,
+                       c.conversation_id, u.name AS user_name,
+                       u.relationship_to_azim AS relationship
+                FROM fazle_messages m
+                JOIN fazle_conversations c ON c.id = m.conversation_id
+                JOIN fazle_users u ON u.id = c.user_id
+                WHERE m.created_at > NOW() - INTERVAL '24 hours'
+                ORDER BY c.conversation_id, m.created_at
+            """)
+
+        if not conversations:
+            # Try fallback: get conversations from memory service
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{settings.memory_url}/search",
+                    json={"query": "recent conversation", "memory_type": "conversation", "limit": 50},
+                )
+                memory_convos = resp.json().get("results", []) if resp.status_code == 200 else []
+
+            if not memory_convos:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        """UPDATE fazle_learning_runs
+                           SET status = 'completed', completed_at = NOW(),
+                               summary = 'No conversations found in last 24h'
+                           WHERE id = $1""",
+                        run_id,
+                    )
+                return {"run_id": run_id, "status": "completed", "summary": "No conversations to reflect on"}
+
+            # Format memory-based conversations
+            transcript_parts = []
+            for c in memory_convos:
+                text = c.get("text", str(c.get("content", "")))
+                transcript_parts.append(text)
+            full_transcript = "\n---\n".join(transcript_parts)
+            conversations_count = len(memory_convos)
+        else:
+            # Group DB conversations by conversation_id and user
+            grouped = {}
+            for row in conversations:
+                key = (row["conversation_id"], row["user_name"], row["relationship"])
+                if key not in grouped:
+                    grouped[key] = []
+                grouped[key].append(f"{row['role']}: {row['content']}")
+
+            transcript_parts = []
+            for (conv_id, user_name, relationship), messages in grouped.items():
+                header = f"[Conversation with {user_name} ({relationship})]"
+                transcript_parts.append(header + "\n" + "\n".join(messages))
+
+            full_transcript = "\n\n===\n\n".join(transcript_parts)
+            conversations_count = len(grouped)
+
+        # Get existing persona adjustments for context
+        async with pool.acquire() as conn:
+            existing_evolutions = await conn.fetch(
+                """SELECT relationship, dimension, new_value
+                   FROM fazle_persona_evolution
+                   WHERE active = TRUE
+                   ORDER BY created_at DESC"""
+            )
+
+        current_adjustments = ""
+        if existing_evolutions:
+            current_adjustments = "\n\nCurrent active persona adjustments:\n" + "\n".join(
+                f"- {r['relationship']}.{r['dimension']} = {r['new_value']}" for r in existing_evolutions
+            )
+
+        # Get relationship graph for context
+        async with pool.acquire() as conn:
+            relationships = await conn.fetch(
+                "SELECT person_name, relationship, attributes FROM fazle_relationship_graph"
+            )
+
+        relationship_context = ""
+        if relationships:
+            relationship_context = "\n\nKnown relationships:\n" + "\n".join(
+                f"- {r['person_name']} ({r['relationship']})" for r in relationships
+            )
+
+        # Truncate transcript to stay within token limits
+        max_chars = 12000
+        if len(full_transcript) > max_chars:
+            full_transcript = full_transcript[:max_chars] + "\n\n[...truncated...]"
+
+        # Call LLM for deep reflection
+        messages = [
+            {"role": "system", "content": REFLECTION_PROMPT},
+            {"role": "user", "content": (
+                f"Reflect on these conversations from the past 24 hours:\n\n"
+                f"{full_transcript}"
+                f"{current_adjustments}"
+                f"{relationship_context}"
+            )},
+        ]
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{settings.llm_gateway_url}/generate",
+                json={
+                    "messages": messages,
+                    "response_format": "json",
+                    "caller": "learning-engine-reflection",
+                    "temperature": 0.4,
+                    "cache": False,
+                },
+            )
+            resp.raise_for_status()
+            reflection = json.loads(resp.json()["content"])
+
+        # Process and store results
+        insights_stored = 0
+        evolutions_stored = 0
+
+        # Store insights as memories
+        for insight in reflection.get("insights", []):
+            if insight.get("confidence", 0) < settings.min_confidence:
+                continue
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                try:
+                    await client.post(
+                        f"{settings.memory_url}/store",
+                        json={
+                            "type": "personal",
+                            "user": "Azim",
+                            "content": {
+                                "insight": insight["text"],
+                                "category": insight.get("category", ""),
+                                "source": "nightly_reflection",
+                                "reflection_run": run_id,
+                            },
+                            "text": f"Reflection insight ({insight.get('category', '')}): {insight['text']}",
+                        },
+                    )
+                    insights_stored += 1
+                except Exception:
+                    pass
+
+        # Store emotional patterns in Redis for quick access
+        emotional_patterns = reflection.get("emotional_patterns", [])
+        if emotional_patterns:
+            r.set(
+                "fazle:reflection:emotional_patterns",
+                json.dumps(emotional_patterns),
+                ex=86400 * 7,  # 7 day TTL
+            )
+
+        # Store contradictions in Redis
+        contradictions = reflection.get("contradictions", [])
+        if contradictions:
+            r.set(
+                "fazle:reflection:contradictions",
+                json.dumps(contradictions),
+                ex=86400 * 7,
+            )
+
+        # Store preference drifts in Redis
+        preference_drifts = reflection.get("preference_drifts", [])
+        if preference_drifts:
+            r.set(
+                "fazle:reflection:preference_drifts",
+                json.dumps(preference_drifts),
+                ex=86400 * 7,
+            )
+
+        # Apply persona adjustments
+        for adj in reflection.get("persona_adjustments", []):
+            confidence = adj.get("confidence", 0)
+            if confidence < settings.min_confidence:
+                continue
+
+            evo_id = str(uuid.uuid4())
+            relationship = adj.get("relationship", "self")
+            dimension = adj.get("dimension", "")
+            new_value = adj.get("recommended_value", "")
+            old_value = adj.get("current_value", "")
+            reason = adj.get("reason", "")
+
+            if not dimension or not new_value:
+                continue
+
+            # Deactivate previous adjustment for same relationship+dimension
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE fazle_persona_evolution
+                       SET active = FALSE
+                       WHERE relationship = $1 AND dimension = $2 AND active = TRUE""",
+                    relationship, dimension,
+                )
+                await conn.execute(
+                    """INSERT INTO fazle_persona_evolution
+                       (id, relationship, dimension, old_value, new_value, reason, confidence, reflection_run_id)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                    evo_id, relationship, dimension, old_value, new_value, reason, confidence, run_id,
+                )
+            evolutions_stored += 1
+
+            # Cache active persona overrides in Redis for fast access by Brain
+            r.hset(
+                f"fazle:persona:{relationship}",
+                dimension,
+                new_value,
+            )
+            r.expire(f"fazle:persona:{relationship}", 86400 * 30)  # 30 day TTL
+
+        # Store full reflection summary in Redis
+        summary = reflection.get("summary", "")
+        r.set(
+            "fazle:reflection:latest",
+            json.dumps({
+                "run_id": run_id,
+                "summary": summary,
+                "insights_count": insights_stored,
+                "evolutions_count": evolutions_stored,
+                "emotional_patterns": len(emotional_patterns),
+                "contradictions": len(contradictions),
+                "preference_drifts": len(preference_drifts),
+                "timestamp": datetime.utcnow().isoformat(),
+            }),
+            ex=86400 * 7,
+        )
+
+        conversations_processed = conversations_count
+
+        # Update run record
+        run_summary = (
+            f"Reflection complete. {conversations_processed} conversations analyzed. "
+            f"{insights_stored} insights stored, {evolutions_stored} persona evolutions applied. "
+            f"{len(emotional_patterns)} emotional patterns, {len(contradictions)} contradictions, "
+            f"{len(preference_drifts)} preference drifts detected. {summary}"
+        )
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE fazle_learning_runs
+                   SET status = 'completed', conversations_processed = $1,
+                       extractions_stored = $2, completed_at = NOW(), summary = $3
+                   WHERE id = $4""",
+                conversations_processed, insights_stored + evolutions_stored, run_summary, run_id,
+            )
+
+        logger.info(f"Reflection run {run_id} complete: {run_summary}")
+
+        return {
+            "run_id": run_id,
+            "status": "completed",
+            "conversations_processed": conversations_processed,
+            "insights_stored": insights_stored,
+            "evolutions_stored": evolutions_stored,
+            "emotional_patterns": len(emotional_patterns),
+            "contradictions": len(contradictions),
+            "preference_drifts": len(preference_drifts),
+            "summary": summary,
+        }
+
+    except Exception as e:
+        logger.error(f"Reflection failed: {e}")
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE fazle_learning_runs
+                   SET status = 'failed', completed_at = NOW(), summary = $1
+                   WHERE id = $2""",
+                str(e)[:500], run_id,
+            )
+        raise HTTPException(status_code=500, detail=f"Reflection failed: {e}")
+
+
+# ── Persona Insights Endpoint ─────────────────────────────
+
+@app.get("/persona/insights")
+async def get_persona_insights():
+    """Return all active persona evolutions, latest reflection summary,
+    emotional patterns, contradictions, and preference drifts.
+    Called by the API gateway (admin only) and by Brain for prompt building."""
+    pool = await get_pool()
+    r = _get_redis()
+
+    # Active persona evolutions from DB
+    async with pool.acquire() as conn:
+        evolutions = await conn.fetch("""
+            SELECT id, relationship, dimension, old_value, new_value, reason,
+                   confidence, reflection_run_id, created_at
+            FROM fazle_persona_evolution
+            WHERE active = TRUE
+            ORDER BY relationship, dimension
+        """)
+
+    # Group evolutions by relationship
+    persona_overrides = {}
+    for evo in evolutions:
+        rel = evo["relationship"]
+        if rel not in persona_overrides:
+            persona_overrides[rel] = {}
+        persona_overrides[rel][evo["dimension"]] = {
+            "value": evo["new_value"],
+            "reason": evo["reason"],
+            "confidence": evo["confidence"],
+            "since": evo["created_at"].isoformat() if evo["created_at"] else None,
+        }
+
+    # Latest reflection from Redis
+    latest_raw = r.get("fazle:reflection:latest")
+    latest_reflection = json.loads(latest_raw) if latest_raw else None
+
+    # Emotional patterns from Redis
+    patterns_raw = r.get("fazle:reflection:emotional_patterns")
+    emotional_patterns = json.loads(patterns_raw) if patterns_raw else []
+
+    # Contradictions from Redis
+    contradictions_raw = r.get("fazle:reflection:contradictions")
+    contradictions = json.loads(contradictions_raw) if contradictions_raw else []
+
+    # Preference drifts from Redis
+    drifts_raw = r.get("fazle:reflection:preference_drifts")
+    preference_drifts = json.loads(drifts_raw) if drifts_raw else []
+
+    # Recent evolution history
+    async with pool.acquire() as conn:
+        recent_history = await conn.fetch("""
+            SELECT relationship, dimension, old_value, new_value, reason,
+                   confidence, created_at, active
+            FROM fazle_persona_evolution
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+
+    return {
+        "persona_overrides": persona_overrides,
+        "latest_reflection": latest_reflection,
+        "emotional_patterns": emotional_patterns,
+        "contradictions": contradictions,
+        "preference_drifts": preference_drifts,
+        "evolution_history": [dict(r) for r in recent_history],
+        "total_active_evolutions": len(evolutions),
+    }
+
+
+@app.get("/persona/overrides/{relationship}")
+async def get_persona_overrides(relationship: str):
+    """Return active persona overrides for a specific relationship.
+    Used by Brain's persona_engine to dynamically adjust prompts."""
+    r = _get_redis()
+
+    # Try Redis cache first (fast path)
+    cached = r.hgetall(f"fazle:persona:{relationship}")
+    if cached:
+        return {"relationship": relationship, "overrides": cached, "source": "cache"}
+
+    # Fall back to DB
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT dimension, new_value
+               FROM fazle_persona_evolution
+               WHERE relationship = $1 AND active = TRUE""",
+            relationship,
+        )
+
+    overrides = {row["dimension"]: row["new_value"] for row in rows}
+
+    # Populate cache for next time
+    if overrides:
+        r.hset(f"fazle:persona:{relationship}", mapping=overrides)
+        r.expire(f"fazle:persona:{relationship}", 86400 * 30)
+
+    return {"relationship": relationship, "overrides": overrides, "source": "database"}

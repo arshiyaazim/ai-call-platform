@@ -41,3 +41,69 @@ scrape_configs:
       - targets: ["fazle-api:8100"]
         labels:
           service: "fazle-api"
+
+  # ── Fazle Brain — Core Reasoning ─────────────────────────
+  - job_name: "fazle-brain"
+    static_configs:
+      - targets: ["fazle-brain:8200"]
+        labels:
+          service: "fazle-brain"
+
+  # ── Fazle Memory — Vector Memory ─────────────────────────
+  - job_name: "fazle-memory"
+    static_configs:
+      - targets: ["fazle-memory:8300"]
+        labels:
+          service: "fazle-memory"
+
+  # ── Fazle Task Engine — Scheduling ───────────────────────
+  - job_name: "fazle-task-engine"
+    static_configs:
+      - targets: ["fazle-task-engine:8400"]
+        labels:
+          service: "fazle-task-engine"
+
+  # ── Fazle Web Intelligence — Search ──────────────────────
+  - job_name: "fazle-web-intelligence"
+    static_configs:
+      - targets: ["fazle-web-intelligence:8500"]
+        labels:
+          service: "fazle-web-intelligence"
+
+  # ── Fazle Trainer — Learning ─────────────────────────────
+  - job_name: "fazle-trainer"
+    static_configs:
+      - targets: ["fazle-trainer:8600"]
+        labels:
+          service: "fazle-trainer"
+
+  # ── Fazle LLM Gateway — Centralized LLM ─────────────────
+  - job_name: "fazle-llm-gateway"
+    static_configs:
+      - targets: ["fazle-llm-gateway:8800"]
+        labels:
+          service: "fazle-llm-gateway"
+
+  # ── Fazle Learning Engine — Self-Improvement ─────────────
+  - job_name: "fazle-learning-engine"
+    static_configs:
+      - targets: ["fazle-learning-engine:8900"]
+        labels:
+          service: "fazle-learning-engine"
+
+  # ── Fazle Queue — Async Request Queue ────────────────────
+  - job_name: "fazle-queue"
+    static_configs:
+      - targets: ["fazle-queue:8810"]
+        labels:
+          service: "fazle-queue"
+
+  # ── Fazle Workers — LLM Worker Pool (replicated) ─────────
+  - job_name: "fazle-workers"
+    dns_sd_configs:
+      - names: ["fazle-workers"]
+        type: A
+        port: 8820
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance

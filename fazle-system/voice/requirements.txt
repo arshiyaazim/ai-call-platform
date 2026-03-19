@@ -1,5 +1,7 @@
-livekit-agents==0.12.20
-livekit-plugins-openai==0.10.14
+livekit-agents==0.12.21
+livekit-plugins-openai==0.10.15
 livekit-plugins-silero==0.7.6
 httpx==0.28.1
 pydantic-settings==2.7.1
+piper-tts>=1.2.0
+onnxruntime>=1.15.0

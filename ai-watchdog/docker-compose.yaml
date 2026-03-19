@@ -1,0 +1,45 @@
+services:
+  ai-watchdog:
+    build: .
+    container_name: ai-watchdog
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    memswap_limit: 256m
+    environment:
+      OLLAMA_URL: "http://ollama:11434"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      REDIS_HOST: "ai-redis"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      CONFIG_PATH: "/app/config.yaml"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/azim/ai-call-platform/ai-watchdog/config.yaml:/app/config.yaml:ro
+    networks:
+      - app-network
+      - db-network
+      - ai-network
+      - monitoring-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; os.stat('/proc/1/status')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  app-network:
+    external: true
+  db-network:
+    external: true
+  ai-network:
+    external: true
+  monitoring-network:
+    external: true

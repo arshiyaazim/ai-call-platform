@@ -4,6 +4,7 @@
 # exposes status polling + Prometheus metrics
 # ============================================================
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
@@ -132,12 +133,13 @@ async def health():
     except Exception:
         checks["redis"] = "error"
         healthy = False
-    return {
+    body = {
         "status": "healthy" if healthy else "degraded",
         "service": "fazle-queue",
         "checks": checks,
         "timestamp": datetime.utcnow().isoformat(),
     }
+    return JSONResponse(content=body, status_code=200 if healthy else 503)
 
 
 @app.post("/enqueue", response_model=EnqueueResponse)

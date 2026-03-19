@@ -346,10 +346,10 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     environment:
-      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_NUM_PARALLEL: "2"
       OLLAMA_MAX_LOADED_MODELS: "1"
-      OLLAMA_MAX_QUEUE: "2"
-      OLLAMA_KEEP_ALIVE: "10m"
+      OLLAMA_MAX_QUEUE: "4"
+      OLLAMA_KEEP_ALIVE: "24h"
       OLLAMA_HOST: "0.0.0.0"
     logging:
       driver: "json-file"
@@ -360,15 +360,53 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 6G
+          memory: 4G
         reservations:
-          memory: 2G
+          memory: 1G
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - ai-network
+
+  # ── Ollama Keepalive — Prevent model unloading ─────────────
+  ollama-keepalive:
+    image: curlimages/curl:8.5.0
+    container_name: ollama-keepalive
+    restart: always
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "[keepalive] Waiting 60s for Ollama to start..."
+        sleep 60
+        echo "[keepalive] Starting keepalive loop for qwen2.5:0.5b"
+        while true; do
+          CODE=$$(curl -sf -o /dev/null -w "%{http_code}" --max-time 30 \
+            http://ollama:11434/api/generate \
+            -d '{"model":"qwen2.5:0.5b","prompt":"hi","stream":false,"options":{"num_predict":1}}')
+          if [ "$$CODE" = "200" ]; then
+            echo "[keepalive] $$(date '+%H:%M:%S') OK"
+          else
+            echo "[keepalive] $$(date '+%H:%M:%S') WARN: HTTP $$CODE"
+          fi
+          sleep 300
+        done
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 32M
+    depends_on:
+      ollama:
+        condition: service_healthy
     networks:
       - ai-network
 
@@ -437,7 +475,7 @@ services:
       OLLAMA_URL: "http://ollama:11434"
       LLM_PROVIDER: "${FAZLE_LLM_PROVIDER:-openai}"
       LLM_MODEL: "${FAZLE_LLM_MODEL:-gpt-4o}"
-      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:0.5b}"
       MEMORY_URL: "http://fazle-memory:8300"
       TOOLS_URL: "http://fazle-web-intelligence:8500"
       TASK_URL: "http://fazle-task-engine:8400"
@@ -601,7 +639,7 @@ services:
       OLLAMA_URL: "http://ollama:11434"
       LLM_PROVIDER: "${FAZLE_LLM_PROVIDER:-openai}"
       LLM_MODEL: "${FAZLE_LLM_MODEL:-gpt-4o}"
-      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:0.5b}"
       MEMORY_URL: "http://fazle-memory:8300"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379/2"
       LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
@@ -644,6 +682,8 @@ services:
       LIVEKIT_URL: "ws://livekit:7880"
       FAZLE_VOICE_BRAIN_URL: "http://fazle-brain:8200"
       FAZLE_VOICE_TTS_VOICE: "${FAZLE_VOICE_TTS_VOICE:-alloy}"
+      FAZLE_VOICE_TTS_ENGINE: "${FAZLE_VOICE_TTS_ENGINE:-openai}"
+      FAZLE_VOICE_FAST_MODE: "${FAZLE_VOICE_FAST_MODE:-true}"
     logging:
       driver: "json-file"
       options:
@@ -721,10 +761,10 @@ services:
       OLLAMA_URL: "http://ollama:11434"
       LLM_PROVIDER: "${FAZLE_LLM_PROVIDER:-openai}"
       LLM_MODEL: "${FAZLE_LLM_MODEL:-gpt-4o}"
-      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_MODEL: "${FAZLE_OLLAMA_MODEL:-qwen2.5:0.5b}"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379/3"
       FALLBACK_PROVIDER: "${FAZLE_FALLBACK_PROVIDER:-ollama}"
-      FALLBACK_MODEL: "${FAZLE_FALLBACK_MODEL:-qwen2.5:3b}"
+      FALLBACK_MODEL: "${FAZLE_FALLBACK_MODEL:-qwen2.5:0.5b}"
       CACHE_TTL: "${FAZLE_CACHE_TTL:-300}"
       RATE_LIMIT_RPM: "${FAZLE_RATE_LIMIT_RPM:-60}"
       RATE_LIMIT_PER_USER_RPS: "${FAZLE_RATE_LIMIT_PER_USER_RPS:-10}"
