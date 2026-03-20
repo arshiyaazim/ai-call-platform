@@ -274,3 +274,54 @@ class UpdateUserRequest(BaseModel):
         if v is not None and v not in VALID_ROLES:
             raise ValueError(f"role must be one of: {', '.join(sorted(VALID_ROLES))}")
         return v
+
+
+# ── User Management ────────────────────────────────────────
+class UserManagementCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    email: str = Field(..., min_length=5, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+    role: str = Field("member", max_length=20)
+
+    @field_validator("email")
+    @classmethod
+    def email_valid(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v):
+            raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("username")
+    @classmethod
+    def username_safe(cls, v: str) -> str:
+        return _validate_safe_text(v, "username")
+
+    @field_validator("role")
+    @classmethod
+    def role_valid(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(sorted(VALID_ROLES))}")
+        return v
+
+
+class UserManagementUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=1, max_length=100)
+    email: Optional[str] = Field(None, min_length=5, max_length=255)
+    role: Optional[str] = Field(None, max_length=20)
+    is_active: Optional[bool] = None
+
+    @field_validator("email")
+    @classmethod
+    def email_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip().lower()
+            if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v):
+                raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def role_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(sorted(VALID_ROLES))}")
+        return v

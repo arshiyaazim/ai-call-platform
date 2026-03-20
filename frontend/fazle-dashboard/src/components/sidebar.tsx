@@ -22,6 +22,9 @@ import {
   Activity,
   GitBranch,
   Store,
+  Shield,
+  Users,
+  MessageCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebarStore } from '@/store/sidebar';
@@ -42,6 +45,9 @@ const navItems = [
   { href: '/dashboard/fazle/observability', label: 'Observability', icon: Activity },
   { href: '/dashboard/fazle/workflows', label: 'Workflows', icon: GitBranch },
   { href: '/dashboard/fazle/tool-marketplace', label: 'Marketplace', icon: Store },
+  { href: '/dashboard/fazle/watchdog', label: 'Watchdog', icon: Shield },
+  { href: '/dashboard/fazle/users', label: 'Users', icon: Users },
+  { href: '/dashboard/fazle/social', label: 'Social', icon: MessageCircle },
   { href: '/dashboard/fazle/logs', label: 'Logs', icon: ScrollText },
   { href: '/dashboard/fazle/settings', label: 'Settings', icon: Settings },
 ];

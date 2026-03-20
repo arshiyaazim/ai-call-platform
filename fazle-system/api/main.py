@@ -28,7 +28,11 @@ from schemas import (
     TokenResponse, UserResponse, UpdateUserRequest,
     ChangePasswordRequest, AdminResetPasswordRequest,
     RequestPasswordResetRequest, ResetPasswordConfirmRequest,
+    UserManagementCreate, UserManagementUpdate,
 )
+from watchdog_routes import router as watchdog_router
+from user_routes import router as user_router
+from social_routes import router as social_router
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin, get_optional_user,
@@ -67,6 +71,7 @@ class Settings(BaseSettings):
     self_learning_url: str = "http://fazle-self-learning:9500"
     guardrail_url: str = "http://fazle-guardrail-engine:9600"
     workflow_engine_url: str = "http://fazle-workflow-engine:9700"
+    social_engine_url: str = "http://fazle-social-engine:9900"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_url: str = "wss://livekit.iamazim.com"
@@ -101,8 +106,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include admin routes
+# Include routers
 app.include_router(admin_router)
+app.include_router(watchdog_router)
+app.include_router(user_router)
+app.include_router(social_router)
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
