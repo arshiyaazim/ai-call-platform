@@ -108,21 +108,15 @@ export default function LearningPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Analyses Run</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold">{stats.analyses_run}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold">{stats.analysis_runs}</div></CardContent>
           </Card>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Improvements</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold">{stats.improvements_generated}</div></CardContent>
+            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Applied Insights</CardTitle></CardHeader>
+            <CardContent><div className="text-2xl font-bold">{stats.applied_insights}</div></CardContent>
           </Card>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Insight Types</CardTitle></CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-1">
-                {Object.entries(stats.insight_types || {}).map(([type, count]) => (
-                  <Badge key={type} variant="outline" className="text-xs">{type}: {count}</Badge>
-                ))}
-              </div>
-            </CardContent>
+            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Patterns Detected</CardTitle></CardHeader>
+            <CardContent><div className="text-2xl font-bold">{stats.patterns_detected}</div></CardContent>
           </Card>
         </div>
       )}
@@ -193,8 +187,8 @@ export default function LearningPage() {
                   className="rounded-lg border p-4 hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-lg">{insightTypeIcon(insight.type)}</span>
-                    <Badge variant="outline">{insight.type}</Badge>
+                    <span className="text-lg">{insightTypeIcon(insight.insight_type)}</span>
+                    <Badge variant="outline">{insight.insight_type}</Badge>
                     <span className={`text-xs font-medium ${confidenceColor(insight.confidence)}`}>
                       {Math.round(insight.confidence * 100)}% confidence
                     </span>
@@ -202,9 +196,9 @@ export default function LearningPage() {
                       {new Date(insight.created_at).toLocaleString()}
                     </span>
                   </div>
-                  <p className="text-sm">{insight.content}</p>
-                  {insight.source && (
-                    <p className="text-xs text-muted-foreground mt-1">Source: {insight.source}</p>
+                  <p className="text-sm">{insight.description}</p>
+                  {insight.action_suggested && (
+                    <p className="text-xs text-muted-foreground mt-1">Suggested Action: {insight.action_suggested}</p>
                   )}
                 </div>
               ))}

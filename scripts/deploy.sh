@@ -93,14 +93,14 @@ if [ "$ACTION" = "update" ]; then
     TARGET="${2:-}"
     if [ "$TARGET" = "fazle" ]; then
         echo "Rolling update: Fazle AI System..."
-        FAZLE_SERVICES="fazle-api fazle-brain fazle-memory fazle-task-engine fazle-web-intelligence fazle-trainer fazle-ui"
+        FAZLE_SERVICES="fazle-api fazle-brain fazle-memory fazle-task-engine fazle-web-intelligence fazle-trainer fazle-ui fazle-guardrail-engine"
         docker compose -f "$COMPOSE_FILE" build $FAZLE_SERVICES
         for svc in $FAZLE_SERVICES; do
             echo "  Updating $svc..."
             docker compose -f "$COMPOSE_FILE" up -d --no-deps --build "$svc"
             sleep 3
         done
-        wait_healthy fazle-api fazle-brain fazle-memory fazle-task-engine fazle-web-intelligence fazle-trainer fazle-ui
+        wait_healthy fazle-api fazle-brain fazle-memory fazle-task-engine fazle-web-intelligence fazle-trainer fazle-ui fazle-guardrail-engine
     elif [ "$TARGET" = "monitoring" ]; then
         echo "Updating monitoring stack..."
         docker compose -f "$COMPOSE_FILE" up -d --no-deps prometheus grafana node-exporter cadvisor loki promtail
@@ -177,6 +177,7 @@ ALL_SERVICES=(
     "ai-postgres" "ai-redis" "minio" "dograh-api" "dograh-ui" "livekit"
     "qdrant" "ollama" "fazle-api" "fazle-brain" "fazle-memory"
     "fazle-task-engine" "fazle-web-intelligence" "fazle-trainer" "fazle-ui"
+    "fazle-guardrail-engine"
     "prometheus" "grafana" "loki"
 )
 wait_healthy "${ALL_SERVICES[@]}"

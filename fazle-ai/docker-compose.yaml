@@ -34,6 +34,8 @@ services:
       FAZLE_KNOWLEDGE_GRAPH_URL: "http://fazle-knowledge-graph:9300"
       FAZLE_AUTONOMOUS_RUNNER_URL: "http://fazle-autonomous-runner:9400"
       FAZLE_SELF_LEARNING_URL: "http://fazle-self-learning:9500"
+      FAZLE_GUARDRAIL_URL: "http://fazle-guardrail-engine:9600"
+      FAZLE_WORKFLOW_ENGINE_URL: "http://fazle-workflow-engine:9700"
       # Vision + MinIO
       FAZLE_OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       FAZLE_MINIO_ENDPOINT: "minio:9000"
@@ -54,6 +56,7 @@ services:
           memory: 128M
     ports:
       - "127.0.0.1:8100:8100"
+      - "127.0.0.1:8101:8100"
     depends_on:
       fazle-brain:
         condition: service_healthy
@@ -724,6 +727,109 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - ai-network
+      - app-network
+
+  # ── Fazle Guardrail Engine — AI Safety ─────────────────────
+  fazle-guardrail-engine:
+    build: ../fazle-system/guardrail-engine
+    container_name: fazle-guardrail-engine
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      FAZLE_DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}@postgres:5432/${POSTGRES_DB:-postgres}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9600/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ai-network
+      - db-network
+
+  # ── Fazle Workflow Engine — Multi-step AI Workflows ────────
+  fazle-workflow-engine:
+    build: ../fazle-system/workflow-engine
+    container_name: fazle-workflow-engine
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      WORKFLOW_DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}@postgres:5432/${POSTGRES_DB:-postgres}"
+      WORKFLOW_LLM_GATEWAY_URL: "http://fazle-llm-gateway:8800"
+      WORKFLOW_BRAIN_URL: "http://fazle-brain:8200"
+      WORKFLOW_TOOL_ENGINE_URL: "http://fazle-tool-engine:9200"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    depends_on:
+      fazle-llm-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9700/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ai-network
+      - db-network
+
+  # ── OpenTelemetry Collector — Distributed Tracing ──────────
+  fazle-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: fazle-otel-collector
+    restart: unless-stopped
+    command: ["--config", "/etc/otel/config.yaml"]
+    volumes:
+      - ../configs/otel/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - ai-network
       - app-network

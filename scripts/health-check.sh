@@ -44,6 +44,7 @@ CONTAINERS=(
     "qdrant" "ollama"
     "fazle-api" "fazle-brain" "fazle-memory"
     "fazle-task-engine" "fazle-web-intelligence" "fazle-trainer" "fazle-ui"
+    "fazle-guardrail-engine"
     "prometheus" "grafana" "loki" "promtail" "node-exporter" "cadvisor"
     "cloudflared-tunnel"
 )
@@ -80,6 +81,7 @@ check_endpoint "LiveKit"         "http://127.0.0.1:7880"
 check_endpoint "Fazle API"       "http://127.0.0.1:8100/health"
 check_endpoint "Fazle UI"        "http://127.0.0.1:3020"
 check_endpoint "Grafana"         "http://127.0.0.1:3030/api/health"
+check_endpoint "Guardrail Engine" "http://127.0.0.1:9600/health"
 
 # Internal-only services (no host port binding) — check via docker exec
 PROM_OK=$(docker exec prometheus wget -q --spider http://localhost:9090/-/healthy 2>/dev/null && echo "OK" || echo "FAIL")

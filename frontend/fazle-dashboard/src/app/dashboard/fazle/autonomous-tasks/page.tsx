@@ -21,7 +21,7 @@ export default function AutonomousTasksPage() {
   const [name, setName] = React.useState('');
   const [taskType, setTaskType] = React.useState('research');
   const [config, setConfig] = React.useState('');
-  const [interval, setInterval_] = React.useState('3600');
+  const [interval, setInterval_] = React.useState('60');
 
   const taskTypes = ['research', 'monitor', 'reminder', 'digest', 'learning', 'custom'];
 
@@ -50,7 +50,7 @@ export default function AutonomousTasksPage() {
         name,
         task_type: taskType,
         config: parsedConfig,
-        interval_seconds: parseInt(interval) || 3600,
+        interval_minutes: parseInt(interval) || 60,
       });
       setName('');
       setConfig('');
@@ -110,11 +110,11 @@ export default function AutonomousTasksPage() {
     }
   };
 
-  const formatInterval = (seconds: number) => {
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
-    return `${Math.round(seconds / 86400)}d`;
+  const formatInterval = (minutes: number | null) => {
+    if (!minutes) return 'N/A';
+    if (minutes < 60) return `${minutes}m`;
+    if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
+    return `${Math.round(minutes / 1440)}d`;
   };
 
   return (
@@ -174,7 +174,7 @@ export default function AutonomousTasksPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="interval">Interval (seconds)</Label>
+              <Label htmlFor="interval">Interval (minutes)</Label>
               <Input
                 id="interval"
                 type="number"
@@ -219,7 +219,7 @@ export default function AutonomousTasksPage() {
                     <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                       <span className="capitalize">{task.task_type}</span>
                       <span>·</span>
-                      <span>Every {formatInterval(task.interval_seconds)}</span>
+                      <span>Every {formatInterval(task.interval_minutes)}</span>
                       {task.last_run && (
                         <>
                           <span>·</span>

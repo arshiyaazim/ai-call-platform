@@ -4,6 +4,7 @@
 # ============================================================
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from prometheus_fastapi_instrumentator import Instrumentator
 import hmac
@@ -25,6 +26,8 @@ from schemas import (
     TrainRequest,
     RegisterRequest, LoginRequest,
     TokenResponse, UserResponse, UpdateUserRequest,
+    ChangePasswordRequest, AdminResetPasswordRequest,
+    RequestPasswordResetRequest, ResetPasswordConfirmRequest,
 )
 from auth import (
     hash_password, verify_password, create_access_token,
@@ -35,7 +38,9 @@ from database import (
     get_user_by_id, list_family_members, update_user, delete_user,
     count_users, save_message, get_user_conversations,
     get_conversation_messages, get_all_conversations,
-    ensure_admin_tables,
+    ensure_admin_tables, ensure_password_reset_table,
+    update_user_password, create_password_reset_token,
+    get_valid_reset_token, mark_reset_token_used,
 )
 from audit import ensure_audit_table, log_action, get_audit_logs
 from admin_routes import router as admin_router
@@ -60,6 +65,8 @@ class Settings(BaseSettings):
     knowledge_graph_url: str = "http://fazle-knowledge-graph:9300"
     autonomous_runner_url: str = "http://fazle-autonomous-runner:9400"
     self_learning_url: str = "http://fazle-self-learning:9500"
+    guardrail_url: str = "http://fazle-guardrail-engine:9600"
+    workflow_engine_url: str = "http://fazle-workflow-engine:9700"
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     livekit_url: str = "wss://livekit.iamazim.com"
@@ -138,6 +145,7 @@ def startup():
         ensure_users_table()
         ensure_audit_table()
         ensure_admin_tables()
+        ensure_password_reset_table()
         logger.info("Database tables ensured on startup")
     except Exception as e:
         logger.error(f"Failed to ensure database tables: {e}")
@@ -179,6 +187,27 @@ async def login(request: LoginRequest):
     return TokenResponse(access_token=token, user=UserResponse(**user_resp))
 
 
+class DashboardLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+@app.post("/fazle/admin/login")
+async def dashboard_login(request: DashboardLoginRequest):
+    """Dashboard login — accepts username (email) and password, returns token + role."""
+    email = request.username.strip().lower()
+    user = get_user_by_email(email)
+    if not user or not verify_password(request.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    token = create_access_token({"sub": str(user["id"]), "role": user["role"], "rel": user["relationship_to_azim"]})
+    user_resp = {k: v for k, v in user.items() if k != "hashed_password"}
+    log_action(user_resp, "login", target_type="user", target_id=str(user["id"]))
+    return {"token": token, "role": user["role"]}
+
+
 @app.post("/auth/setup", response_model=TokenResponse)
 async def setup_admin(request: RegisterRequest):
     """Initial admin setup — only works when no users exist."""
@@ -201,6 +230,76 @@ async def setup_admin(request: RegisterRequest):
 async def get_me(user: dict = Depends(get_current_user)):
     """Get the current authenticated user."""
     return UserResponse(**user)
+
+
+# ── Password Management endpoints ───────────────────────────
+@app.post("/auth/change-password")
+async def change_password(request: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    """Change your own password. Requires current password."""
+    # Fetch full user record with hashed_password
+    full_user = get_user_by_email(user["email"])
+    if not full_user or not verify_password(request.current_password, full_user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    new_hash = hash_password(request.new_password)
+    update_user_password(str(user["id"]), new_hash)
+    log_action(user, "change_password", target_type="user", target_id=str(user["id"]))
+    return {"status": "password_changed"}
+
+
+@app.post("/auth/admin/reset-password")
+async def admin_reset_password(request: AdminResetPasswordRequest, admin: dict = Depends(require_admin)):
+    """Admin resets another user's password."""
+    target = get_user_by_id(request.user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_hash = hash_password(request.new_password)
+    update_user_password(request.user_id, new_hash)
+    log_action(admin, "admin_reset_password", target_type="user", target_id=request.user_id,
+               detail=f"Admin reset password for {target.get('email', 'unknown')}")
+    return {"status": "password_reset"}
+
+
+@app.post("/auth/request-password-reset")
+async def request_password_reset(request: RequestPasswordResetRequest):
+    """Request a password reset token. Always returns 200 to prevent email enumeration."""
+    import secrets
+    import hashlib
+    from datetime import timedelta, timezone
+
+    user = get_user_by_email(request.email)
+    if user:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        create_password_reset_token(str(user["id"]), token_hash, expires)
+        # In production, send email with raw_token. Log for now.
+        logger.info(f"Password reset token generated for {request.email} (token: {raw_token})")
+
+    # Always return same response to prevent email enumeration
+    return {"status": "if_account_exists_reset_email_sent"}
+
+
+@app.post("/auth/reset-password")
+async def reset_password_confirm(request: ResetPasswordConfirmRequest):
+    """Confirm password reset using token."""
+    import hashlib
+
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    token_record = get_valid_reset_token(token_hash)
+    if not token_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    new_hash = hash_password(request.new_password)
+    update_user_password(str(token_record["user_id"]), new_hash)
+    mark_reset_token_used(str(token_record["id"]))
+
+    user = get_user_by_id(str(token_record["user_id"]))
+    if user:
+        log_action(user, "reset_password_via_token", target_type="user", target_id=str(user["id"]))
+
+    return {"status": "password_reset_successful"}
 
 
 @app.get("/auth/family", response_model=list[UserResponse])
@@ -1088,3 +1187,360 @@ async def self_learning_stats():
         except httpx.HTTPError as e:
             logger.error(f"Self-learning stats error: {e}")
             raise HTTPException(status_code=502, detail="Self-learning engine unavailable")
+
+
+# ── AI Safety Guardrail Engine proxy ────────────────────────
+
+@app.post("/fazle/guardrail/check", dependencies=[Depends(verify_auth)])
+async def guardrail_check(body: dict):
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(f"{settings.guardrail_url}/guardrail/check", json=body)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail check error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.get("/fazle/guardrail/policies", dependencies=[Depends(verify_auth)])
+async def guardrail_policies():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.guardrail_url}/guardrail/policies")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail policies error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.post("/fazle/guardrail/policies")
+async def guardrail_create_policy(body: dict, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(f"{settings.guardrail_url}/guardrail/policies", json=body)
+            resp.raise_for_status()
+            log_action(admin, "create_policy", target_type="guardrail", detail=str(body.get("name", "")))
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail create policy error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.put("/fazle/guardrail/policies/{policy_id}")
+async def guardrail_update_policy(policy_id: str, body: dict, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.put(f"{settings.guardrail_url}/guardrail/policies/{policy_id}", json=body)
+            resp.raise_for_status()
+            log_action(admin, "update_policy", target_type="guardrail", target_id=policy_id)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail update policy error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.delete("/fazle/guardrail/policies/{policy_id}")
+async def guardrail_delete_policy(policy_id: str, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.delete(f"{settings.guardrail_url}/guardrail/policies/{policy_id}")
+            resp.raise_for_status()
+            log_action(admin, "delete_policy", target_type="guardrail", target_id=policy_id)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail delete policy error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.put("/fazle/guardrail/policies/{policy_id}/toggle")
+async def guardrail_toggle_policy(policy_id: str, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.put(f"{settings.guardrail_url}/guardrail/policies/{policy_id}/toggle")
+            resp.raise_for_status()
+            log_action(admin, "toggle_policy", target_type="guardrail", target_id=policy_id)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail toggle policy error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.get("/fazle/guardrail/logs")
+async def guardrail_logs(limit: int = 50, risk_level: str = None, decision: str = None, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            params = {"limit": limit}
+            if risk_level:
+                params["risk_level"] = risk_level
+            if decision:
+                params["decision"] = decision
+            resp = await client.get(f"{settings.guardrail_url}/guardrail/logs", params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail logs error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.post("/fazle/guardrail/logs/{log_id}/review")
+async def guardrail_review(log_id: str, body: dict, admin: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(f"{settings.guardrail_url}/guardrail/logs/{log_id}/review", json=body)
+            resp.raise_for_status()
+            log_action(admin, "review_action", target_type="guardrail", target_id=log_id,
+                       detail=f"Decision: {body.get('decision', '')}")
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail review error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+@app.get("/fazle/guardrail/stats", dependencies=[Depends(verify_auth)])
+async def guardrail_stats():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.guardrail_url}/guardrail/stats")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Guardrail stats error: {e}")
+            raise HTTPException(status_code=502, detail="Guardrail engine unavailable")
+
+
+# ── Observability proxy ─────────────────────────────────────
+
+@app.get("/fazle/observability/metrics", dependencies=[Depends(verify_auth)])
+async def observability_metrics():
+    """Aggregate metrics from Prometheus for dashboard display."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            queries = {
+                "api_request_rate": 'sum(rate(http_requests_total{service=~"fazle-.*"}[5m]))',
+                "api_latency_p95": 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="fazle-api"}[5m])) by (le))',
+                "container_count": 'count(up{job=~"fazle-.*"})',
+                "healthy_services": 'sum(up{job=~"fazle-.*"})',
+            }
+            results = {}
+            for key, query in queries.items():
+                try:
+                    r = await client.get("http://prometheus:9090/api/v1/query", params={"query": query})
+                    if r.status_code == 200:
+                        data = r.json()
+                        result = data.get("data", {}).get("result", [])
+                        if result:
+                            results[key] = float(result[0].get("value", [0, 0])[1])
+                        else:
+                            results[key] = 0
+                except Exception:
+                    results[key] = 0
+            return results
+        except httpx.HTTPError as e:
+            logger.error(f"Observability metrics error: {e}")
+            raise HTTPException(status_code=502, detail="Prometheus unavailable")
+
+
+@app.get("/fazle/observability/services", dependencies=[Depends(verify_auth)])
+async def observability_services():
+    """Get health status of all Fazle services from Prometheus."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.get("http://prometheus:9090/api/v1/query",
+                                 params={"query": 'up{job=~"fazle-.*"}'})
+            if r.status_code == 200:
+                data = r.json()
+                services = []
+                for result in data.get("data", {}).get("result", []):
+                    services.append({
+                        "service": result["metric"].get("job", "unknown"),
+                        "instance": result["metric"].get("instance", ""),
+                        "up": int(result["value"][1]) == 1,
+                    })
+                return {"services": services}
+            return {"services": []}
+        except httpx.HTTPError as e:
+            logger.error(f"Observability services error: {e}")
+            raise HTTPException(status_code=502, detail="Prometheus unavailable")
+
+
+@app.get("/fazle/observability/container-stats", dependencies=[Depends(verify_auth)])
+async def observability_container_stats():
+    """Get CPU + memory for all Fazle containers."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            containers = []
+            cpu_r = await client.get("http://prometheus:9090/api/v1/query",
+                                     params={"query": 'rate(container_cpu_usage_seconds_total{name=~"fazle-.*"}[5m]) * 100'})
+            mem_r = await client.get("http://prometheus:9090/api/v1/query",
+                                     params={"query": 'container_memory_usage_bytes{name=~"fazle-.*"} / 1024 / 1024'})
+            cpu_map = {}
+            if cpu_r.status_code == 200:
+                for r in cpu_r.json().get("data", {}).get("result", []):
+                    name = r["metric"].get("name", "")
+                    cpu_map[name] = round(float(r["value"][1]), 2)
+            mem_map = {}
+            if mem_r.status_code == 200:
+                for r in mem_r.json().get("data", {}).get("result", []):
+                    name = r["metric"].get("name", "")
+                    mem_map[name] = round(float(r["value"][1]), 1)
+            all_names = set(list(cpu_map.keys()) + list(mem_map.keys()))
+            for name in sorted(all_names):
+                containers.append({
+                    "name": name,
+                    "cpu_percent": cpu_map.get(name, 0),
+                    "memory_mb": mem_map.get(name, 0),
+                })
+            return {"containers": containers}
+        except httpx.HTTPError as e:
+            logger.error(f"Container stats error: {e}")
+            raise HTTPException(status_code=502, detail="Prometheus unavailable")
+
+
+# ── Workflow Engine proxy ────────────────────────────────────
+
+@app.post("/fazle/workflows/create")
+async def workflow_create(body: dict, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(f"{settings.workflow_engine_url}/workflows/create", json=body)
+            resp.raise_for_status()
+            log_action(user, "create_workflow", target_type="workflow", detail=str(body.get("name", "")))
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow create error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+@app.post("/fazle/workflows/{workflow_id}/start")
+async def workflow_start(workflow_id: str, body: dict = None, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(f"{settings.workflow_engine_url}/workflows/{workflow_id}/start",
+                                     json=body or {})
+            resp.raise_for_status()
+            log_action(user, "start_workflow", target_type="workflow", target_id=workflow_id)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow start error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+@app.get("/fazle/workflows", dependencies=[Depends(verify_auth)])
+async def workflow_list(status: str = None, limit: int = 50):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            params = {"limit": limit}
+            if status:
+                params["status"] = status
+            resp = await client.get(f"{settings.workflow_engine_url}/workflows", params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow list error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+@app.get("/fazle/workflows/{workflow_id}", dependencies=[Depends(verify_auth)])
+async def workflow_status(workflow_id: str):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.workflow_engine_url}/workflows/{workflow_id}")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow status error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+@app.post("/fazle/workflows/{workflow_id}/stop")
+async def workflow_stop(workflow_id: str, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(f"{settings.workflow_engine_url}/workflows/{workflow_id}/stop")
+            resp.raise_for_status()
+            log_action(user, "stop_workflow", target_type="workflow", target_id=workflow_id)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow stop error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+@app.get("/fazle/workflows/{workflow_id}/logs", dependencies=[Depends(verify_auth)])
+async def workflow_logs(workflow_id: str, limit: int = 100):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.workflow_engine_url}/workflows/{workflow_id}/logs",
+                                    params={"limit": limit})
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Workflow logs error: {e}")
+            raise HTTPException(status_code=502, detail="Workflow engine unavailable")
+
+
+# ── Tool Marketplace proxy ───────────────────────────────────
+
+@app.get("/fazle/marketplace/tools", dependencies=[Depends(verify_auth)])
+async def marketplace_list():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{settings.tool_engine_url}/marketplace/tools")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Marketplace list error: {e}")
+            raise HTTPException(status_code=502, detail="Tool engine unavailable")
+
+
+@app.post("/fazle/marketplace/tools/install")
+async def marketplace_install(body: dict, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(f"{settings.tool_engine_url}/marketplace/tools/install", json=body)
+            resp.raise_for_status()
+            log_action(user, "install_tool", target_type="marketplace", detail=str(body.get("name", "")))
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Marketplace install error: {e}")
+            raise HTTPException(status_code=502, detail="Tool engine unavailable")
+
+
+@app.post("/fazle/marketplace/tools/{tool_name}/enable")
+async def marketplace_enable(tool_name: str, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(f"{settings.tool_engine_url}/marketplace/tools/{tool_name}/enable")
+            resp.raise_for_status()
+            log_action(user, "enable_tool", target_type="marketplace", detail=tool_name)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Marketplace enable error: {e}")
+            raise HTTPException(status_code=502, detail="Tool engine unavailable")
+
+
+@app.post("/fazle/marketplace/tools/{tool_name}/disable")
+async def marketplace_disable(tool_name: str, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(f"{settings.tool_engine_url}/marketplace/tools/{tool_name}/disable")
+            resp.raise_for_status()
+            log_action(user, "disable_tool", target_type="marketplace", detail=tool_name)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Marketplace disable error: {e}")
+            raise HTTPException(status_code=502, detail="Tool engine unavailable")
+
+
+@app.delete("/fazle/marketplace/tools/{tool_name}")
+async def marketplace_remove(tool_name: str, user: dict = Depends(require_admin)):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.delete(f"{settings.tool_engine_url}/marketplace/tools/{tool_name}")
+            resp.raise_for_status()
+            log_action(user, "remove_tool", target_type="marketplace", detail=tool_name)
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Marketplace remove error: {e}")
+            raise HTTPException(status_code=502, detail="Tool engine unavailable")

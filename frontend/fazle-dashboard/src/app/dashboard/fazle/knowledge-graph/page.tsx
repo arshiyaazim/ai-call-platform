@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import * as React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -87,7 +87,7 @@ export default function KnowledgeGraphPage() {
     return colors[type] || 'bg-gray-100 text-gray-800';
   };
 
-  const filteredNodes = filterType === 'all' ? nodes : nodes.filter((n) => n.type === filterType);
+  const filteredNodes = filterType === 'all' ? nodes : nodes.filter((n) => n.node_type === filterType);
 
   return (
     <div className="space-y-6">
@@ -172,7 +172,7 @@ export default function KnowledgeGraphPage() {
               {queryResults.map((node) => (
                 <div key={node.id} className="rounded border p-3">
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded ${typeColor(node.type)}`}>{node.type}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${typeColor(node.node_type)}`}>{node.node_type}</span>
                     <span className="font-medium">{node.name}</span>
                   </div>
                   {node.properties && Object.keys(node.properties).length > 0 && (
@@ -221,7 +221,7 @@ export default function KnowledgeGraphPage() {
               {filteredNodes.map((node) => (
                 <div key={node.id} className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors">
                   <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-0.5 rounded ${typeColor(node.type)}`}>{node.type}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${typeColor(node.node_type)}`}>{node.node_type}</span>
                     <span className="font-medium">{node.name}</span>
                   </div>
                   <span className="text-xs text-muted-foreground">{new Date(node.created_at).toLocaleDateString()}</span>

@@ -17,6 +17,11 @@ import {
   Network,
   PlayCircle,
   Lightbulb,
+  Settings,
+  ShieldAlert,
+  Activity,
+  GitBranch,
+  Store,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebarStore } from '@/store/sidebar';
@@ -33,7 +38,12 @@ const navItems = [
   { href: '/dashboard/fazle/knowledge-graph', label: 'Knowledge Graph', icon: Network },
   { href: '/dashboard/fazle/autonomous-tasks', label: 'Auto Tasks', icon: PlayCircle },
   { href: '/dashboard/fazle/learning', label: 'Learning', icon: Lightbulb },
+  { href: '/dashboard/fazle/ai-safety', label: 'AI Safety', icon: ShieldAlert },
+  { href: '/dashboard/fazle/observability', label: 'Observability', icon: Activity },
+  { href: '/dashboard/fazle/workflows', label: 'Workflows', icon: GitBranch },
+  { href: '/dashboard/fazle/tool-marketplace', label: 'Marketplace', icon: Store },
   { href: '/dashboard/fazle/logs', label: 'Logs', icon: ScrollText },
+  { href: '/dashboard/fazle/settings', label: 'Settings', icon: Settings },
 ];
 
 export function Sidebar() {

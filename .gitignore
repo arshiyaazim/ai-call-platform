@@ -2,7 +2,11 @@
 .env
 .env.local
 .env.production
+.env.*
 New VPS Password.txt
+*.pem
+*.key
+*.crt
 
 # Local validation workspace
 local-validation/
@@ -16,11 +20,18 @@ Project developmenmt.docx
 # Node
 node_modules/
 .next/
+.turbo/
+dist/
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
 
 # Logs
 logs/
@@ -35,3 +46,16 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# Docker volumes / data (never commit persistent data)
+postgres_data/
+redis_data/
+minio_data/
+qdrant_storage/
+ollama_models/
+
+# Deployment state
+.last-deploy-commit

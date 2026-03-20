@@ -98,6 +98,48 @@ class MemorySearchRequest(BaseModel):
         return v
 
 
+# ── Password Management ────────────────────────────────────
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strong(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
+
+class AdminResetPasswordRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-fA-F0-9\-]+$")
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class RequestPasswordResetRequest(BaseModel):
+    email: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def email_valid(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.match(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$", v):
+            raise ValueError("Invalid email format")
+        return v
+
+
+class ResetPasswordConfirmRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=255)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 # ── Knowledge ingestion ────────────────────────────────────
 class KnowledgeIngestRequest(BaseModel):
     text: str = Field("", max_length=MAX_TRANSCRIPT_LEN)

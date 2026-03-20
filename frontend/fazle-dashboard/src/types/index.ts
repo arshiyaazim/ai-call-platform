@@ -181,3 +181,110 @@ export interface ToolDefinition {
   usage_count: number;
   last_used: string | null;
 }
+
+// ── AI Safety Guardrail Types ──────────────────────────────
+
+export interface GuardrailPolicy {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  rule_type: 'keyword' | 'pattern' | 'rate_limit' | 'approval_required';
+  rule_config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface GuardrailActionLog {
+  id: string;
+  action_type: string;
+  input_text: string;
+  risk_score: number;
+  risk_level: 'low' | 'medium' | 'high' | 'critical';
+  policies_triggered: string[];
+  decision: 'allowed' | 'blocked' | 'pending_approval';
+  review_status: 'pending' | 'approved' | 'rejected';
+  reviewed_by: string | null;
+  review_notes: string | null;
+  created_at: string;
+}
+
+export interface GuardrailStats {
+  total_checks: number;
+  blocked: number;
+  allowed: number;
+  pending_review: number;
+  risk_distribution: Record<string, number>;
+  top_triggered_policies: Array<{ policy: string; count: number }>;
+}
+
+// ── Observability Types ────────────────────────────────────
+
+export interface ObservabilityMetrics {
+  api_request_rate: number;
+  api_latency_p95: number;
+  container_count: number;
+  healthy_services: number;
+}
+
+export interface ServiceHealth {
+  service: string;
+  instance: string;
+  up: boolean;
+}
+
+export interface ContainerStats {
+  name: string;
+  cpu_percent: number;
+  memory_mb: number;
+}
+
+// ── Workflow Orchestration Types ────────────────────────────
+
+export interface WorkflowStep {
+  name: string;
+  type: 'llm_call' | 'tool_call' | 'condition' | 'delay' | 'webhook';
+  config: Record<string, unknown>;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  steps: WorkflowStep[];
+  status: 'draft' | 'running' | 'completed' | 'failed' | 'stopped';
+  trigger_type: 'manual' | 'schedule' | 'event';
+  current_step: number;
+  result: Record<string, unknown>;
+  error: string;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface WorkflowLog {
+  id: string;
+  workflow_id: string;
+  step_index: number;
+  level: string;
+  message: string;
+  data: Record<string, unknown>;
+  created_at: string | null;
+}
+
+// ── Tool Marketplace Types ─────────────────────────────────
+
+export interface MarketplaceTool {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  version: string;
+  enabled: boolean;
+  installed: boolean;
+  requires_approval: boolean;
+  status: 'available' | 'disabled' | 'error';
+  usage_count: number;
+  last_used: string | null;
+}

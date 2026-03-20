@@ -1,8 +1,9 @@
-# Dograh + Fazle AI — Voice Agent SaaS Platform
+# Dograh + Fazle AI — Autonomous Voice Agent Platform
 
-> AI-powered voice agent platform with a personal intelligence layer. Handles real-time phone calls via Twilio SIP and LiveKit WebRTC, backed by a self-improving AI brain that learns from every interaction.
+> AI-powered voice agent platform with an autonomous intelligence layer. Handles real-time phone calls via Twilio SIP and LiveKit WebRTC, backed by a multi-agent AI brain that plans, reasons, learns, and self-improves across every interaction.
 
-**Domain:** `iamazim.com` &nbsp;|&nbsp; **VPS:** Contabo (4 CPUs, 8 GB RAM, Ubuntu)
+**Domain:** `iamazim.com` &nbsp;|&nbsp; **VPS:** Contabo (4 CPUs, 8 GB RAM, Ubuntu)  
+**Version:** Phase 5 — Autonomous AI System &nbsp;|&nbsp; **Containers:** 20+
 
 ---
 
@@ -14,8 +15,13 @@
   - [Stack 1 — ai-infra (Foundation)](#stack-1--ai-infra-foundation)
   - [Stack 2 — dograh (Voice Platform)](#stack-2--dograh-voice-platform)
   - [Stack 3 — fazle-ai (Intelligence Layer)](#stack-3--fazle-ai-intelligence-layer)
+  - [Stack 4 — Phase-5 Autonomous Services](#stack-4--phase-5-autonomous-services)
   - [Auxiliary — AI Watchdog & Control Plane](#auxiliary--ai-watchdog--control-plane)
 - [Fazle Personal AI System](#fazle-personal-ai-system)
+  - [Multi-Agent Brain](#multi-agent-brain)
+  - [Autonomous AI (Phase 5)](#autonomous-ai-phase-5)
+  - [How a Call Flows](#how-a-call-flows)
+- [Dashboard](#dashboard)
 - [Networking & Domains](#networking--domains)
 - [Monitoring Stack](#monitoring-stack)
 - [Database](#database)
@@ -41,15 +47,20 @@ The platform combines two systems:
 | System | Purpose |
 |--------|---------|
 | **Dograh** | Open-source voice AI SaaS — handles inbound/outbound phone calls with real-time STT/TTS, LiveKit WebRTC streaming, and Twilio SIP integration. |
-| **Fazle** | Custom personal AI layer — autonomous reasoning, semantic memory, relationship-aware personality, self-improving learning engine, and voice cloning. |
+| **Fazle** | Custom autonomous AI layer — multi-agent reasoning, goal decomposition, tool execution, knowledge graph, semantic memory, self-learning, relationship-aware personality, and voice cloning. |
 
-Together they deliver an AI voice clone that answers phone calls, remembers conversations, learns user preferences, and maintains relationship-specific behavior (family, friends, professional contacts) with content safety boundaries.
+Together they deliver an AI voice clone that answers phone calls, remembers conversations, autonomously plans and executes multi-step tasks, builds a knowledge graph from interactions, learns from its own behavior, and maintains relationship-specific behavior (family, friends, professional contacts) with content safety boundaries.
 
 **Key capabilities:**
 - Real-time voice call handling (Twilio → LiveKit → STT → LLM → TTS)
+- Multi-agent brain with 5 specialized agents (conversation, memory, research, task, tool)
+- Autonomous goal planning with self-reflection and retry logic
+- Tool execution engine with permission control and sandboxing
+- Knowledge graph tracking people, projects, conversations, and relationships
+- Background autonomous task runner (research, monitoring, digests, reminders)
+- Self-learning engine that detects patterns and optimizes agent routing
 - Personality injection with relationship-aware context
 - Semantic memory search over all past conversations (Qdrant vectors)
-- Self-improving learning engine that extracts preferences and updates the relationship graph
 - LLM gateway with caching, rate limiting, request batching, and OpenAI ↔ Ollama fallback
 - Async task queue with auto-scaling workers
 - Full observability: Prometheus + Grafana + Loki + Promtail
@@ -80,21 +91,48 @@ Together they deliver an AI voice clone that answers phone calls, remembers conv
                         │  ┌─────────┐  ┌────────┐  ┌────────────┐ │
                         │  │  Brain  │  │ Memory │  │ LLM Gateway│ │
                         │  │  :8200  │  │ :8300  │  │   :8800    │ │
-                        │  └────┬────┘  └────┬───┘  └─────┬──────┘ │
-                        │       │            │            │         │
-                        │  ┌────▼────┐  ┌────▼───┐  ┌────▼──────┐ │
-                        │  │ Tasks   │  │Trainer │  │  Queue    │ │
-                        │  │ :8400   │  │ :8600  │  │  :8810    │ │
-                        │  └─────────┘  └────────┘  └────┬──────┘ │
-                        │                                │         │
-                        │  ┌──────────┐  ┌──────────┐ ┌──▼──────┐ │
-                        │  │  Voice   │  │ Learning │ │ Workers │ │
-                        │  │  :8700   │  │  :8900   │ │ :8820×4 │ │
-                        │  └──────────┘  └──────────┘ └─────────┘ │
+                        │  │(5 agents)  └────┬───┘  └─────┬──────┘ │
+                        │  └────┬────┘       │            │         │
+                        │       │       ┌────▼───┐  ┌────▼──────┐ │
+                        │  ┌────▼────┐  │Trainer │  │  Queue    │ │
+                        │  │ Tasks   │  │ :8600  │  │  :8810    │ │
+                        │  │ :8400   │  └────────┘  └────┬──────┘ │
+                        │  └─────────┘                   │         │
+                        │                          ┌─────▼───────┐ │
+                        │  ┌──────────┐ ┌────────┐ │  Workers    │ │
+                        │  │  Voice   │ │Learning│ │  :8820 × 4  │ │
+                        │  │  :8700   │ │ :8900  │ └─────────────┘ │
+                        │  └──────────┘ └────────┘                 │
                         │  ┌──────────────────┐                    │
                         │  │ Web Intelligence │                    │
                         │  │     :8500        │                    │
                         │  └──────────────────┘                    │
+                        └───────────────┬──────────────────────────┘
+                                        │
+                        ┌───────────────▼──────────────────────────┐
+                        │       Phase 5 — Autonomous Services       │
+                        │                                           │
+                        │  ┌────────────────┐  ┌────────────────┐  │
+                        │  │ Autonomy Engine│  │  Tool Engine   │  │
+                        │  │    :9100       │  │    :9200       │  │
+                        │  │ Goal planning  │  │ Tool registry  │  │
+                        │  │ & execution    │  │ & sandboxed    │  │
+                        │  └────────────────┘  │   execution    │  │
+                        │                      └────────────────┘  │
+                        │  ┌────────────────┐  ┌────────────────┐  │
+                        │  │Knowledge Graph │  │ Auto Runner    │  │
+                        │  │    :9300       │  │    :9400       │  │
+                        │  │ Entity &       │  │ Background     │  │
+                        │  │ relationship   │  │ tasks &        │  │
+                        │  │ tracking       │  │ scheduling     │  │
+                        │  └────────────────┘  └────────────────┘  │
+                        │  ┌────────────────┐                      │
+                        │  │ Self Learning  │                      │
+                        │  │    :9500       │                      │
+                        │  │ Pattern        │                      │
+                        │  │ analysis &     │                      │
+                        │  │ optimization   │                      │
+                        │  └────────────────┘                      │
                         └───────────────┬──────────────────────────┘
                                         │
               ┌─────────────────────────┼───────────────────────────┐
@@ -112,7 +150,7 @@ Together they deliver an AI voice clone that answers phone calls, remembers conv
 
 ## Services
 
-The system deploys as **three Docker Compose stacks** started in order.
+The system deploys as **four Docker Compose stacks** started in order.
 
 ### Stack 1 — ai-infra (Foundation)
 
@@ -149,18 +187,32 @@ Custom-built Fazle services. Each builds from `fazle-system/`.
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| fazle-api | 8100 | API Gateway — routing, JWT auth, rate limiting |
-| fazle-brain | 8200 | Reasoning engine — LLM routing, personality injection |
+| fazle-api | 8100 | API Gateway — routing, JWT auth, rate limiting, Phase-5 proxy |
+| fazle-brain | 8200 | Multi-agent reasoning engine — 5 agents, personality injection |
 | fazle-memory | 8300 | Vector memory — Qdrant semantic search, context retrieval |
 | fazle-task-engine | 8400 | Scheduler — reminders, recurring tasks (APScheduler) |
 | fazle-web-intelligence | 8500 | Web search & scraping (Serper API, BeautifulSoup) |
 | fazle-trainer | 8600 | ML training — preference extraction, fine-tuning |
 | fazle-voice | 8700 | Voice processing — accent modulation, cloning |
-| fazle-ui | 3020 | Next.js dashboard — settings, conversation history |
+| fazle-ui | 3020 | Next.js dashboard — settings, conversations, Phase-5 management |
 | fazle-llm-gateway | 8800 | Centralized LLM routing with cache & rate limits |
 | fazle-queue | 8810 | Async request queue (Redis Streams) |
 | fazle-learning-engine | 8900 | Self-improvement — conversation analysis, knowledge extraction |
 | fazle-workers | 8820 | Worker pool (4 replicas) consuming from queue |
+
+### Stack 4 — Phase-5 Autonomous Services
+
+Five new microservices enabling autonomous operation. Deployed via `phase5-standalone.yaml`.
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| fazle-autonomy-engine | 9100 | Goal decomposition — breaks goals into multi-step plans with self-reflection and retry |
+| fazle-tool-engine | 9200 | Tool orchestration — registry, permission control, sandboxed execution (6 built-in tools) |
+| fazle-knowledge-graph | 9300 | Entity & relationship store — people, projects, conversations, topics with link tracking |
+| fazle-autonomous-runner | 9400 | Background task runner — research, monitoring, digests, reminders on interval/cron triggers |
+| fazle-self-learning | 9500 | Pattern analysis — detects behavioral patterns, optimizes agent routing, generates insights |
+
+All Phase-5 services expose `/health` and `/metrics` (Prometheus) endpoints. The API gateway proxies all Phase-5 routes through `/fazle/autonomy/*`, `/fazle/tool-engine/*`, `/fazle/knowledge-graph/*`, and `/fazle/self-learning/*`.
 
 ### Auxiliary — AI Watchdog & Control Plane
 
@@ -173,52 +225,142 @@ Custom-built Fazle services. Each builds from `fazle-system/`.
 
 ## Fazle Personal AI System
 
-Fazle is a layered intelligence system composed of 11 microservices:
+Fazle is a layered intelligence system composed of 17 microservices across 5 layers:
 
 ```
-Layer 1  API Gateway (fazle-api)
+Layer 1  API Gateway (fazle-api :8100)
            ├── JWT auth, rate limiting, request routing
+           ├── Phase-5 proxy routes (autonomy, tools, KG, learning)
            │
-Layer 2  Brain (fazle-brain)                 Memory (fazle-memory)
-           ├── LLM reasoning                   ├── Qdrant vector search
-           ├── Personality injection            ├── Embedding generation
-           └── Decision making                  └── Context retrieval
+Layer 2  Brain + Agents (fazle-brain :8200)
+           ├── Multi-agent orchestration (5 agents)
+           ├── Query routing: FAST_VOICE / CONVERSATION / FULL_PIPELINE
+           ├── Personality injection from persona definitions
            │
-Layer 3  Tasks (fazle-task-engine)           Tools (fazle-web-intelligence)
+           │   ┌─────────────────────────────────────────────────────┐
+           │   │  Agent Manager                                      │
+           │   │  ├── ConversationAgent — direct LLM responses       │
+           │   │  ├── MemoryAgent — semantic recall & fact storage    │
+           │   │  ├── ResearchAgent — web search & content scraping   │
+           │   │  ├── TaskAgent — scheduling & reminders              │
+           │   │  └── ToolAgent — plugin-based tool execution         │
+           │   └─────────────────────────────────────────────────────┘
+           │
+         Memory (fazle-memory :8300)
+           ├── Qdrant vector search
+           ├── Embedding generation
+           └── Context retrieval
+           │
+Layer 3  Tasks (fazle-task-engine :8400)     Tools (fazle-web-intelligence :8500)
            ├── Scheduling (APScheduler)         ├── Web search (Serper)
            └── Reminders & automation           └── Scraping + summarization
            │
-         Trainer (fazle-trainer)
+         Trainer (fazle-trainer :8600)
            ├── Preference extraction
            └── Fine-tuning
            │
-Layer 4  LLM Gateway (fazle-llm-gateway)    Learning Engine (fazle-learning-engine)
-           ├── Response caching (300 s TTL)     ├── Conversation analysis
-           ├── Rate limiting (10 req/s)         ├── Relationship graph updates
-           ├── Request batching (75 ms / 4)     ├── Correction processing
-           └── Model fallback (OpenAI → Ollama) └── Nightly batch learning
+Layer 4  LLM Gateway (fazle-llm-gateway :8800)
+           ├── Response caching (300 s TTL)
+           ├── Rate limiting (10 req/s)
+           ├── Request batching (75 ms / 4)
+           └── Model fallback (OpenAI → Ollama)
            │
-         Queue (fazle-queue) + Workers (fazle-workers × 4)
+         Learning Engine (fazle-learning-engine :8900)
+           ├── Conversation analysis
+           ├── Relationship graph updates
+           ├── Correction processing
+           └── Nightly batch learning
+           │
+         Queue (fazle-queue :8810) + Workers (fazle-workers × 4 :8820)
            ├── Redis Streams consumer group
            ├── Async request handling
            └── Auto-scaling (2–4 workers)
            │
-Layer 5  Voice (fazle-voice)                 UI (fazle-ui)
-           ├── Accent/tone personalization      ├── Next.js dashboard
-           └── Voice cloning                    └── Settings & history
+Layer 5  Voice (fazle-voice :8700)           UI (fazle-ui :3020)
+           ├── Accent/tone personalization      ├── Next.js 14 dashboard
+           └── Voice cloning                    └── Phase-5 management pages
+           │
+Layer 6  Autonomous AI (Phase 5)
+           ├── Autonomy Engine (:9100) — goal planning & execution
+           ├── Tool Engine (:9200) — secure tool orchestration
+           ├── Knowledge Graph (:9300) — entity relationship store
+           ├── Autonomous Runner (:9400) — background task execution
+           └── Self Learning (:9500) — pattern analysis & optimization
 ```
 
-### How a call flows
+### Multi-Agent Brain
+
+The Brain service runs an **Agent Manager** that orchestrates 5 specialized agents through a pipeline:
+
+| Agent | Role | Trigger Keywords |
+|-------|------|-----------------|
+| **ConversationAgent** | Direct LLM responses (Ollama fast path or gateway) | Default fallback for all queries |
+| **MemoryAgent** | Semantic memory recall, fact storage | "remember", "what did I", "who is", "my preference" |
+| **ResearchAgent** | Web search, content scraping, summarization | "search", "find", "look up", "latest", "news" |
+| **TaskAgent** | Task creation, scheduling, reminders | "remind", "schedule", "set up", "tomorrow" |
+| **ToolAgent** | Plugin tool discovery and execution | "send email", "run code", "check calendar" |
+
+**Query routing** classifies incoming messages into three paths:
+- **FAST_VOICE** — Simple greetings via voice, routed directly to Ollama for ultra-low latency
+- **CONVERSATION** — Normal conversation with basic memory context
+- **FULL_PIPELINE** — Complex queries running all agents (memory + research + task + tool + LLM)
+
+### Autonomous AI (Phase 5)
+
+Five microservices that give Fazle the ability to act independently:
+
+**Autonomy Engine** (:9100) — Receives high-level goals and decomposes them into multi-step plans. Each plan step can invoke tools, query memory, or call the LLM. Supports self-reflection after execution, automatic retry (up to 3 attempts), and plan status tracking (pending → planning → executing → reflecting → completed).
+
+**Tool Engine** (:9200) — Manages a registry of 6 built-in tools with permission control:
+| Tool | Category | Requires Approval |
+|------|----------|-------------------|
+| `web_search` | Web search | No |
+| `http_request` | HTTP requests | Yes |
+| `memory_search` | Memory operations | No |
+| `memory_store` | Memory operations | No |
+| `summarize` | Summarization | No |
+| `code_sandbox` | Code execution | Yes |
+
+Tools can be enabled/disabled per-tool. Dangerous operations (HTTP requests, code execution) require explicit approval.
+
+**Knowledge Graph** (:9300) — Maintains an in-memory graph of entities and relationships extracted from conversations. Supports 8 node types (person, project, company, conversation, task, topic, location, concept) and 10 relationship types (works_with, belongs_to, discussed_in, related_to, etc.). Provides context enrichment for the Brain via `/context/{node_id}`.
+
+**Autonomous Runner** (:9400) — Executes background tasks on schedules (interval, cron, or one-shot). Task types include research, monitoring, reminders, digests, and learning. Limits to 5 concurrent tasks with a 5-minute runtime cap per task.
+
+**Self Learning** (:9500) — Analyzes conversation patterns and agent performance. Detects 6 insight types: patterns, preferences, improvements, routing optimizations, knowledge gaps, and behavioral insights. Tracks metrics per agent (latency, success rate, user satisfaction) and suggests routing optimizations.
+
+### How a Call Flows
 
 1. Incoming Twilio SIP call → **Dograh API** receives webhook
 2. Audio streamed via **LiveKit** WebRTC room
 3. Real-time STT transcribes caller speech
-4. **Fazle Brain** receives transcript, queries **Memory** for context
-5. **LLM Gateway** generates a response (cached / rate-limited / batched)
-6. Response injected with personality from `personality/*.md`
-7. TTS converts response to audio, streamed back via LiveKit
-8. **Learning Engine** asynchronously analyzes the conversation
-9. **Memory** stores embeddings; **Trainer** extracts preferences
+4. **Agent Manager** in Brain classifies query → routes to agent pipeline
+5. **MemoryAgent** retrieves relevant context from Qdrant
+6. **ResearchAgent** / **TaskAgent** / **ToolAgent** contribute if triggered
+7. **LLM Gateway** generates response (cached / rate-limited / batched)
+8. Response injected with personality from `personality/*.md`
+9. TTS converts response to audio, streamed back via LiveKit
+10. **Knowledge Graph** updates entities and relationships
+11. **Self Learning** asynchronously analyzes the interaction
+12. **Memory** stores embeddings; **Trainer** extracts preferences
+
+---
+
+## Dashboard
+
+The Fazle UI (Next.js 14, TypeScript, Tailwind CSS) provides a control dashboard at `fazle.iamazim.com` with the following pages:
+
+| Page | Route | Purpose |
+|------|-------|---------|
+| Overview | `/dashboard` | System status, quick actions |
+| Conversations | `/dashboard/conversations` | Chat history, search |
+| Settings | `/dashboard/settings` | Brain, memory, voice configuration |
+| **Autonomous Tasks** | `/dashboard/autonomous-tasks` | Create/manage background tasks, schedule intervals, view execution history |
+| **Tool Engine** | `/dashboard/tool-engine` | View tool registry, enable/disable tools, trigger manual tool executions |
+| **Knowledge Graph** | `/dashboard/knowledge-graph` | Visualize entities and relationships, browse nodes by type |
+| **Learning** | `/dashboard/learning` | View learning insights, trigger analysis, monitor pattern detection stats |
+
+Pages marked in **bold** were added in Phase 5.
 
 ---
 
@@ -351,10 +493,13 @@ cd ai-infra && docker compose up -d && cd ..
 # 6. Start voice platform
 cd dograh && docker compose -f dograh-docker-compose.yaml up -d && cd ..
 
-# 7. Start Fazle AI
+# 7. Start Fazle AI (core services)
 cd fazle-ai && docker compose -f fazle-docker-compose.yaml up -d && cd ..
 
-# 8. Verify all services
+# 8. Start Phase-5 autonomous services
+docker compose -f phase5-standalone.yaml up -d
+
+# 9. Verify all services
 ./scripts/health-check.sh
 ```
 
@@ -524,6 +669,14 @@ pytest tests/test_llm_gateway.py
 | `test_llm_gateway.py` | LLM gateway caching & rate limiting |
 | `test_persona_evolution.py` | Personality update logic |
 | `test_safety_fail_closed.py` | Content moderation fail-closed behavior |
+| `test_autonomy_engine.py` | Goal decomposition, plan execution, self-reflection |
+| `test_tool_engine.py` | Tool registry, permission control, sandboxed execution |
+| `test_knowledge_graph.py` | Entity/relationship CRUD, context retrieval |
+| `test_autonomous_runner.py` | Task scheduling, background execution |
+| `test_self_learning.py` | Pattern detection, insight generation, routing optimization |
+| `test_agent_manager.py` | Multi-agent routing, pipeline orchestration |
+| `test_phase5_integration.py` | End-to-end Phase-5 service integration |
+| `test_phase5_api_proxy.py` | API gateway proxy routes for Phase-5 |
 
 Integration tests are available as shell scripts in `scripts/test-*.sh`.
 
@@ -550,6 +703,7 @@ configs/
 Additional configs:
 - `personality/personality.md` — Master personality definition
 - `personality/azim-master-persona.md` — Detailed persona rules, relationship boundaries, content safety
+- `phase5-standalone.yaml` — Docker Compose for Phase-5 autonomous services (standalone deployment)
 - `db/rls/rls_policies.sql` — Row-Level Security policies
 - `db/hardening/` — Database hardening scripts
 
@@ -557,11 +711,20 @@ Additional configs:
 
 ## Roadmap
 
-Key planned features (from `yet-to-develop.txt`):
+### Completed
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| Phase 1 | Core platform (Dograh + Fazle) | Deployed |
+| Phase 2 | Firewall, ports, network isolation | Deployed |
+| Phase 3 | TLS/SSL, Certbot, Coturn hardening | Deployed |
+| Phase 4 | Database RLS, security hardening, learning system | Deployed |
+| Phase 5 | Autonomous AI — multi-agent brain, autonomy engine, tool engine, knowledge graph, autonomous runner, self-learning | Deployed (2026-03-19) |
+
+### Planned
 
 - **Voice AI Training** — Custom voice model training pipeline
 - **Voice Cloning** — Full voice clone with accent/tone personalization
-- **Behavior Improvement** — Enhanced learning from corrections and conversation patterns
 - **PII Redaction** — Strip personal data before storing extracted knowledge
 - **PWA Support** — Service worker, manifest, and offline capabilities
 - **CI/CD Pipeline** — Automated testing and deployment

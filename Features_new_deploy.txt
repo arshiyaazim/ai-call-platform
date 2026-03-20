@@ -1,0 +1,811 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              FAZLE AI DASHBOARD — PAGES, FUNCTIONS & FEATURES              ║
+║                     Next.js 14 · TypeScript · Tailwind CSS                 ║
+║                          Deployed: March 2026                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+================================================================================
+                           TABLE OF CONTENTS
+================================================================================
+
+  PART A — CORE PLATFORM (Phase 1-4)
+    1. Overview Dashboard
+    2. Agent Manager
+    3. Memory Manager
+    4. Task Scheduler
+    5. Persona Editor
+    6. Plugin Manager
+
+  PART B — AUTONOMOUS AI (Phase 5)
+    7. Autonomy Engine
+    8. Autonomous Tasks
+    9. Knowledge Graph
+   10. Self-Learning
+
+  APPENDIX
+    A. Navigation Map
+    B. Summary Matrix
+    C. Tech Stack
+
+
+================================================================================
+                     DASHBOARD NAVIGATION DIAGRAM
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  SIDEBAR                          MAIN CONTENT AREA                    │
+  │  ┌───────────────┐               ┌───────────────────────────────────┐ │
+  │  │ Fazle AI       │               │                                   │ │
+  │  │                │               │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐│ │
+  │  │ ▸ Overview     │───────────────│  │ Bot │ │Brain│ │Tasks│ │ Zap ││ │
+  │  │ ▸ Agents       │               │  │  5  │ │ 128 │ │  12 │ │42ms ││ │
+  │  │ ▸ Memory       │               │  └─────┘ └─────┘ └─────┘ └─────┘│ │
+  │  │ ▸ Tasks        │               │                                   │ │
+  │  │ ▸ Persona      │               │  DataTable / Cards / Forms        │ │
+  │  │ ▸ Tools        │               │  ┌───────────────────────────────┐│ │
+  │  │                │               │  │ Searchable  │ Sortable        ││ │
+  │  │ ── Phase 5 ──  │               │  │ Filterable  │ Paginated       ││ │
+  │  │ ▸ Autonomy     │               │  └───────────────────────────────┘│ │
+  │  │ ▸ Auto Tasks   │               │                                   │ │
+  │  │ ▸ Knowledge    │               │  [+ Add New]  [↻ Refresh]        │ │
+  │  │ ▸ Learning     │               │                                   │ │
+  │  └───────────────┘               └───────────────────────────────────┘ │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+
+████████████████████████████████████████████████████████████████████████████████
+█                    PART A — CORE PLATFORM (Phase 1-4)                      █
+████████████████████████████████████████████████████████████████████████████████
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. OVERVIEW DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle
+  Component:  FazleDashboardPage
+  Purpose:    Platform-wide statistics at a glance
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  STAT CARD LAYOUT                                                   │
+  │                                                                     │
+  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────┐│
+  │  │ 🤖 Active │  │ 🧠 Total │  │ 📅 Sched │  │ ⚡ Avg   │  │ 💬   ││
+  │  │  Agents  │  │ Memories │  │  Tasks   │  │ Latency  │  │Convos││
+  │  │    5     │  │   128    │  │    12    │  │   42ms   │  │   3  ││
+  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────┘│
+  └─────────────────────────────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────┐
+  │ Feature                  │ Description                              │
+  ├──────────────────────────┼──────────────────────────────────────────┤
+  │ Active Agents card       │ Live count of active AI agents           │
+  │ Total Memories card      │ Total stored memory entries              │
+  │ Scheduled Tasks card     │ Count of active cron jobs                │
+  │ Avg Latency card         │ Response latency in ms (rounded)         │
+  │ Active Conversations     │ Count of ongoing conversations           │
+  │ Error banner             │ Red alert when stats API fails           │
+  │ Loading skeleton         │ Pulse animation placeholder while        │
+  │                          │ data loads                               │
+  └──────────────────────────┴──────────────────────────────────────────┘
+
+  DATA FLOW:
+    useDashboardStats() hook ──→ GET /fazle/dashboard/stats ──→ 5 stat cards
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. AGENT MANAGER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/agents
+  Component:  AgentsPage
+  Purpose:    Full CRUD management of AI agents and their configurations
+
+  CRUD FLOW:
+    ┌────────────┐     ┌──────────────┐     ┌────────────────┐
+    │  [+ Add]   │────→│  Modal Form  │────→│  POST /agents  │
+    │  Button    │     │  (Zod valid) │     │  via API       │
+    └────────────┘     └──────────────┘     └────────────────┘
+                              │
+                              ▼
+    ┌────────────┐     ┌──────────────┐     ┌────────────────┐
+    │  Row ⋯     │────→│  Edit Modal  │────→│  PUT /agents   │
+    │  Actions   │     │  (prefilled) │     │  via API       │
+    └────────────┘     └──────────────┘     └────────────────┘
+                              │
+                              ▼
+    ┌────────────┐     ┌──────────────┐     ┌────────────────┐
+    │  Delete    │────→│  Confirm     │────→│ DELETE /agents  │
+    │  Action    │     │  Dialog      │     │  via API       │
+    └────────────┘     └──────────────┘     └────────────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ openNew()              │ Opens modal with defaults: GPT-4o model,      │
+  │                        │ priority 50, status active, enabled true      │
+  │ openEdit(agent)        │ Opens modal pre-filled with agent data        │
+  │ onSubmit(data)         │ Creates new or updates existing agent via API │
+  │ toggleEnabled(agent)   │ Toggles enabled/disabled with one click       │
+  │ onDelete()             │ Deletes agent after confirmation dialog       │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ DataTable with search    │ Searchable, sortable table of all agents     │
+  │ Model selector           │ GPT-4o · GPT-4o Mini · GPT-4 Turbo ·        │
+  │                          │ Claude 3 Opus · Claude 3 Sonnet ·            │
+  │                          │ Qwen 2.5 3B · Ollama Local                   │
+  │ Priority field           │ Numeric input, range 0–100                   │
+  │ Status badge             │ Visual active / inactive / error indicator   │
+  │ Enable/Disable switch    │ Toggle switch per agent row                  │
+  │ Action dropdown          │ Edit · Enable/Disable · Delete               │
+  │ Confirm delete dialog    │ Destructive action warning before deletion   │
+  │ Zod form validation      │ Client-side validation for all fields        │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  TABLE COLUMNS:
+    Agent Name │ Model │ Priority │ Status │ Enabled │ Actions
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3. MEMORY MANAGER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/memory
+  Component:  MemoryPage
+  Purpose:    Manage Fazle AI long-term memory entries
+
+  MEMORY LIFECYCLE:
+    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │  Create  │───→│  Active  │───→│  Locked  │───→│  Delete  │
+    │  Entry   │    │  (edit)  │    │ (frozen) │    │ (confirm)│
+    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+                          │              │
+                          └──── 🔓 ──────┘  (toggle lock/unlock)
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ openNew()              │ Opens modal to add memory (default: knowledge)│
+  │ openEdit(memory)       │ Opens modal pre-filled with memory data       │
+  │ onSubmit(data)         │ Updates memory entry via API                  │
+  │ onDelete()             │ Deletes memory after confirmation             │
+  │ Lock/Unlock toggle     │ Toggles lock to prevent/allow modification    │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ DataTable with search    │ Search by content, truncated 300px preview   │
+  │ Memory type selector     │ Knowledge · Conversation · Preference · Fact │
+  │ Status badge             │ Active / Inactive visual indicator           │
+  │ Lock indicator           │ 🔒 Yellow lock = locked, 🔓 = editable      │
+  │ ID display               │ Truncated 8-char monospace ID preview        │
+  │ Date column              │ Formatted creation date                      │
+  │ Action dropdown          │ Edit · Delete                                │
+  │ Confirm delete dialog    │ Warning before permanent deletion            │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  TABLE COLUMNS:
+    ID │ Content │ Type │ Created │ Status │ Lock │ Actions
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4. TASK SCHEDULER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/tasks
+  Component:  TasksPage
+  Purpose:    Manage scheduled tasks and cron jobs
+
+  TASK STATE MACHINE:
+    ┌──────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐
+    │ Created  │───→│ Running  │───→│ Completed │    │  Failed  │
+    └──────────┘    └────┬─────┘    └───────────┘    └──────────┘
+                         │  ▲
+                    pause│  │resume
+                         ▼  │
+                    ┌──────────┐
+                    │  Paused  │
+                    └──────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ openNew()              │ Opens modal (default: hourly, running)        │
+  │ openEdit(task)         │ Opens modal pre-filled with task data         │
+  │ onSubmit(data)         │ Creates or updates a scheduled task           │
+  │ togglePause(task)      │ Toggles between running ↔ paused states      │
+  │ onDelete()             │ Deletes task after confirmation               │
+  │ formatDate(date)       │ Formats dates for Last Run / Next Run display │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ DataTable with search    │ Searchable, sortable task table              │
+  │ Cron preset selector     │ Every minute · 5 min · hourly · daily ·      │
+  │                          │ weekly · custom                              │
+  │ Cron expression input    │ Manual cron input with format hint           │
+  │                          │ (minute hour day month weekday)              │
+  │ Status badge             │ Running / Paused / Completed / Failed        │
+  │ Last Run / Next Run      │ Formatted timestamps per task                │
+  │ Pause/Resume actions     │ Quick toggle via action dropdown             │
+  │ Confirm delete dialog    │ Warning before deletion                      │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  CRON PRESETS:
+    ┌─────────────────┬──────────────┐
+    │ Preset          │ Expression   │
+    ├─────────────────┼──────────────┤
+    │ Every minute    │ * * * * *    │
+    │ Every 5 minutes │ */5 * * * *  │
+    │ Every hour      │ 0 * * * *    │
+    │ Daily midnight  │ 0 0 * * *    │
+    │ Every Monday    │ 0 0 * * 1    │
+    │ Custom          │ (user input) │
+    └─────────────────┴──────────────┘
+
+  TABLE COLUMNS:
+    Task Name │ Schedule │ Status │ Last Run │ Next Run │ Actions
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  5. PERSONA EDITOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/persona
+  Component:  PersonaPage
+  Purpose:    Configure Fazle AI personality and behavior
+
+  FORM LAYOUT:
+    ┌─────────────────────────────────────────────┐
+    │  👤 AI Persona Configuration                 │
+    │  Define how Fazle AI speaks, thinks, behaves │
+    │                                               │
+    │  Name:    [  Fazle                         ]  │
+    │                                               │
+    │  Tone:    [  friendly, professional        ]  │
+    │  Language: [  English                       ]  │
+    │                                               │
+    │  Speaking Style:                              │
+    │  ┌─────────────────────────────────────────┐  │
+    │  │ Concise and clear, uses analogies...    │  │
+    │  │                                         │  │
+    │  └─────────────────────────────────────────┘  │
+    │                                               │
+    │  Knowledge Notes:                             │
+    │  ┌─────────────────────────────────────────┐  │
+    │  │ Additional knowledge and context...     │  │
+    │  │                                         │  │
+    │  │                                         │  │
+    │  │                                         │  │
+    │  └─────────────────────────────────────────┘  │
+    │                                               │
+    │  [💾 Save Changes]  ✓ Persona saved!          │
+    └─────────────────────────────────────────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ onSubmit(data)         │ Saves persona config, shows success toast     │
+  │ Auto-populate          │ Pre-fills form from existing persona on load  │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Name field               │ AI persona name (e.g., "Fazle")              │
+  │ Tone field               │ Personality tone (e.g., "friendly")          │
+  │ Language field            │ Primary language setting                     │
+  │ Speaking Style textarea  │ Multi-line speaking style description        │
+  │ Knowledge Notes textarea │ Additional context (6 rows)                  │
+  │ Save button              │ Disabled when no changes made (pristine)     │
+  │ Success toast            │ "Persona saved successfully!" for 3 seconds  │
+  │ Zod validation           │ Required field validation on submit          │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  6. PLUGIN MANAGER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/tools
+  Component:  ToolsPage
+  Purpose:    Manage tools and plugins for Fazle AI
+
+  PLUGIN INSTALL FLOW:
+    ┌──────────────┐       ┌───────────────┐       ┌──────────────┐
+    │ [+ Add New]  │──────→│  Modal Form   │──────→│ POST /plugins│
+    │              │       │  name, desc,  │       │              │
+    │              │       │  version      │       │              │
+    └──────────────┘       └───────────────┘       └──────────────┘
+
+    ┌──────────────┐       ┌───────────────┐       ┌──────────────┐
+    │ [📤 Install  │──────→│ File picker   │──────→│ Upload .json │
+    │  Manifest]   │       │ (.json)       │       │ manifest     │
+    └──────────────┘       └───────────────┘       └──────────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ openNew()              │ Opens modal (default: v1.0.0, active, enabled)│
+  │ openEdit(plugin)       │ Opens modal pre-filled with plugin data       │
+  │ onSubmit(data)         │ Updates plugin metadata via API               │
+  │ toggleEnabled(plugin)  │ Toggles plugin enabled/disabled status        │
+  │ handleFileUpload(e)    │ Installs plugin from uploaded JSON manifest   │
+  │ onDelete()             │ Deletes plugin after confirmation             │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ DataTable with search    │ Searchable, sortable plugin table            │
+  │ Description column       │ Truncated 300px content preview              │
+  │ Version column           │ Plugin version display (e.g., 1.0.0)        │
+  │ Status badge             │ Active / Inactive / Error indicators         │
+  │ Enable/Disable switch    │ Toggle per row                               │
+  │ Install Manifest button  │ Upload .json file to install plugins         │
+  │ Action dropdown          │ Edit · Enable/Disable · Delete               │
+  │ Confirm delete dialog    │ Warning before permanent deletion            │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  TABLE COLUMNS:
+    Tool Name │ Description │ Version │ Status │ Enabled │ Actions
+
+
+████████████████████████████████████████████████████████████████████████████████
+█                    PART B — AUTONOMOUS AI (Phase 5)                         █
+████████████████████████████████████████████████████████████████████████████████
+
+  Phase 5 adds four new dashboard pages that connect to five backend
+  microservices deployed on ports 9100–9500:
+
+    ┌──────────────────┐     ┌──────────────────┐
+    │  Autonomy Engine │     │ Autonomous Tasks │
+    │     :9100        │     │     :9400        │
+    └────────┬─────────┘     └────────┬─────────┘
+             │                        │
+             ▼                        ▼
+    ┌──────────────────────────────────────────┐
+    │          fazle-api (:8100)                │
+    │   /fazle/autonomy/*    /fazle/auto-tasks/*│
+    │   /fazle/tool-engine/* /fazle/knowledge/* │
+    │   /fazle/self-learning/*                  │
+    └──────────────────────────────────────────┘
+             ▲                        ▲
+             │                        │
+    ┌────────┴─────────┐     ┌────────┴─────────┐
+    │ Knowledge Graph  │     │  Self-Learning   │
+    │     :9300        │     │     :9500        │
+    └──────────────────┘     └──────────────────┘
+             ▲
+             │
+    ┌────────┴─────────┐
+    │  Tool Engine     │
+    │     :9200        │
+    └──────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  7. AUTONOMY ENGINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/autonomy
+  Component:  AutonomyPage
+  Backend:    fazle-autonomy-engine (:9100)
+  Purpose:    Create and manage autonomous goal-decomposition plans
+
+  PLAN LIFECYCLE:
+    ┌──────────┐  Generate  ┌──────────┐  Execute  ┌───────────┐
+    │  Goal    │──────────→│ Pending  │─────────→│ Executing │
+    │  Input   │           │  Plan    │          │  Steps    │
+    └──────────┘           └──────────┘          └─────┬─────┘
+                                                       │
+                                    ┌──────────────────┼──────────────────┐
+                                    ▼                  ▼                  ▼
+                              ┌───────────┐     ┌───────────┐     ┌──────────┐
+                              │ Completed │     │  Failed   │     │  Paused  │
+                              │    ✓      │     │    ✗      │     │    ⏸     │
+                              └───────────┘     └───────────┘     └──────────┘
+
+  FUNCTIONS:
+  ┌──────────────────────────┬─────────────────────────────────────────────┐
+  │ Function                 │ Description                                 │
+  ├──────────────────────────┼─────────────────────────────────────────────┤
+  │ fetchPlans()             │ Fetches up to 50 autonomy plans from API    │
+  │ createPlan(autoExecute)  │ Creates plan: generate-only OR generate &   │
+  │                          │ auto-execute immediately                    │
+  │ executePlan(planId)      │ Triggers execution of a pending plan        │
+  │ viewPlan(planId)         │ Fetches full plan detail with steps         │
+  └──────────────────────────┴─────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Goal input               │ Text field for what the AI should accomplish │
+  │ Context input            │ Optional constraints / additional context    │
+  │ "Generate Plan" button   │ Creates plan without executing               │
+  │ "Generate & Execute"     │ Creates and immediately runs the plan        │
+  │ Plan list                │ Scrollable list: goal, status, step count,   │
+  │                          │ creation date                                │
+  │ Status badges            │ pending · completed · executing · failed ·   │
+  │                          │ paused — each color-coded                    │
+  │ View button (👁)         │ Expands inline detail card for a plan        │
+  │ Execute button (▶)       │ Triggers execution (pending plans only)      │
+  │ Plan detail card         │ Numbered steps, per-step status, reflection  │
+  │ Refresh button           │ Manual data reload                           │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  UI CARDS:
+    ┌─────────────────────────────┐
+    │ ➕ New Autonomy Plan         │
+    │ Goal: [________________]    │
+    │ Context: [______________]   │
+    │ [⚡ Generate]  [▶ Gen+Exec] │
+    └─────────────────────────────┘
+    ┌─────────────────────────────┐
+    │ Plans (12)                  │
+    │ ┌─────────────────────────┐ │
+    │ │ Research AI frameworks  │ │
+    │ │ ● completed · 5 steps  │ │
+    │ └─────────────────────────┘ │
+    │ ┌─────────────────────────┐ │
+    │ │ Analyze user feedback   │ │
+    │ │ ○ pending · 3 steps    │ │
+    │ └─────────────────────────┘ │
+    └─────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  8. AUTONOMOUS TASKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/autonomous-tasks
+  Component:  AutonomousTasksPage
+  Backend:    fazle-autonomous-runner (:9400)
+  Purpose:    Schedule and manage background autonomous tasks
+
+  TASK TYPES:
+    ┌────────────┬─────────────────────────────────────────┐
+    │ Type       │ Use Case                                │
+    ├────────────┼─────────────────────────────────────────┤
+    │ research   │ Periodic web research on a topic        │
+    │ monitor    │ Watch for changes / alerts              │
+    │ reminder   │ Time-based notifications                │
+    │ digest     │ Summarize accumulated data              │
+    │ learning   │ Self-improvement analysis cycles        │
+    │ custom     │ User-defined arbitrary logic            │
+    └────────────┴─────────────────────────────────────────┘
+
+  FUNCTIONS:
+  ┌──────────────────────────┬─────────────────────────────────────────────┐
+  │ Function                 │ Description                                 │
+  ├──────────────────────────┼─────────────────────────────────────────────┤
+  │ fetchTasks()             │ Loads all autonomous tasks from API         │
+  │ createTask()             │ Creates new scheduled task with config      │
+  │ runTask(taskId)          │ Triggers immediate execution               │
+  │ pauseTask(taskId)        │ Pauses a running task                      │
+  │ deleteTask(taskId)       │ Removes task from the system               │
+  │ fetchHistory()           │ Loads execution history (last 50 runs)     │
+  │ formatInterval(minutes)  │ Converts minutes → human-readable:         │
+  │                          │   <60 → "45m"  <1440 → "2h"  else → "1d"  │
+  └──────────────────────────┴─────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Task name input          │ Name for the autonomous task                 │
+  │ Task type selector       │ 6 types: research, monitor, reminder,        │
+  │                          │ digest, learning, custom                     │
+  │ Config input             │ JSON or plain text configuration             │
+  │ Interval input           │ Execution interval in minutes                │
+  │ Task list                │ Cards: name, status, type, interval, last run│
+  │ Run now button (▶)       │ Immediate execution trigger                  │
+  │ Pause button (⏸)         │ Pauses active tasks                          │
+  │ Delete button (🗑)       │ Removes task with destructive styling        │
+  │ History panel            │ Past executions: task_id, timestamp, result  │
+  │ Refresh button           │ Manual data reload                           │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  INTERVAL DISPLAY:
+    60 minutes   →  "1h"
+    120 minutes  →  "2h"
+    1440 minutes →  "1d"
+    30 minutes   →  "30m"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  9. KNOWLEDGE GRAPH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/knowledge-graph
+  Component:  KnowledgeGraphPage
+  Backend:    fazle-knowledge-graph (:9300)
+  Purpose:    Explore entities, relationships, and contextual knowledge
+
+  ENTITY EXTRACTION FLOW:
+    ┌──────────────────────────────────┐
+    │ "John works at Google on the     │
+    │  AI research project in NYC"     │
+    └───────────────┬──────────────────┘
+                    │ Extract & Store
+                    ▼
+    ┌───────┐    ┌───────┐    ┌─────────┐    ┌──────────┐
+    │ John  │───→│Google │───→│AI Proj  │───→│  NYC     │
+    │person │    │company│    │project  │    │ location │
+    └───────┘    └───────┘    └─────────┘    └──────────┘
+       works_at ──┘  has_project──┘  located_in──┘
+
+  NODE TYPES & COLORS:
+    ┌───────────────┬──────────────────────────────────────┐
+    │ Node Type     │ Color                                │
+    ├───────────────┼──────────────────────────────────────┤
+    │ person        │ 🔵 Blue                              │
+    │ project       │ 🟢 Green                             │
+    │ company       │ 🟣 Purple                            │
+    │ topic         │ 🟡 Yellow                            │
+    │ concept       │ 🩷 Pink                               │
+    │ task          │ 🟠 Orange                             │
+    │ conversation  │ ⚪ Gray                               │
+    │ location      │ 🩵 Teal                               │
+    └───────────────┴──────────────────────────────────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ fetchData()            │ Loads graph stats + up to 100 nodes           │
+  │ handleQuery()          │ Searches graph by text, optional type filter  │
+  │ handleUpdate()         │ Extracts entities/relationships from free     │
+  │                        │ text and stores them in the graph             │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Stats dashboard          │ 3 cards: Total Nodes · Relationships ·       │
+  │                          │ Node Types breakdown (badges)                │
+  │ Update Graph card        │ Free-text input for entity extraction        │
+  │ "Extract & Store" button │ NLP-powered entity extraction from text      │
+  │ Query Graph card         │ Search input with Enter-key trigger          │
+  │ Type filter dropdown     │ Filter: all · person · project · company ·   │
+  │                          │ conversation · task · topic · location ·     │
+  │                          │ concept                                      │
+  │ Query results            │ Matching nodes with type badge, name,        │
+  │                          │ properties                                   │
+  │ Node list                │ Browsable list, filterable by type           │
+  │ Color-coded type badges  │ Each node type has a distinct color          │
+  │ Refresh button           │ Manual data reload                           │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  UI LAYOUT:
+    ┌──────────┐  ┌──────────────┐  ┌──────────┐
+    │ Total    │  │Relationships │  │ Node     │
+    │ Nodes    │  │              │  │ Types    │
+    │   47     │  │     62       │  │ 8 types  │
+    └──────────┘  └──────────────┘  └──────────┘
+
+    ┌─────────────────────────────────┐
+    │ ➕ Update Graph                  │
+    │ Text: [________________________]│
+    │ [🔗 Extract & Store]            │
+    └─────────────────────────────────┘
+
+    ┌─────────────────────────────────┐
+    │ 🔍 Query Graph                  │
+    │ [________________] [Search]     │
+    │                                 │
+    │ Results:                        │
+    │  🔵 person  │ John  │ age: 32  │
+    │  🟢 project │ AI    │ v2.0     │
+    └─────────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  10. SELF-LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Route:      /dashboard/fazle/learning
+  Component:  LearningPage
+  Backend:    fazle-self-learning (:9500)
+  Purpose:    Insights, patterns, and continuous self-improvement
+
+  LEARNING PIPELINE:
+    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+    │ Conversation │───→│   Analyze    │───→│   Extract    │
+    │    Input     │    │   Engine     │    │   Insights   │
+    └──────────────┘    └──────────────┘    └──────┬───────┘
+                                                   │
+                                                   ▼
+    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+    │   Applied    │←───│  Generate    │←───│   Pattern    │
+    │  Improvement │    │ Improvements │    │  Detection   │
+    └──────────────┘    └──────────────┘    └──────────────┘
+
+  INSIGHT TYPES & ICONS:
+    ┌────────────────────────┬──────┬─────────────────────────────────┐
+    │ Insight Type           │ Icon │ Meaning                         │
+    ├────────────────────────┼──────┼─────────────────────────────────┤
+    │ pattern                │  🔄  │ Recurring behavioral pattern     │
+    │ preference             │  ⭐  │ User preference detected         │
+    │ improvement            │  📈  │ Performance improvement found    │
+    │ routing_optimization   │  🔀  │ Query routing can be optimized   │
+    │ knowledge_gap          │  ❓  │ Missing knowledge identified     │
+    │ behavioral             │  🧠  │ Behavioral insight               │
+    │ (other)                │  💡  │ General insight                  │
+    └────────────────────────┴──────┴─────────────────────────────────┘
+
+  CONFIDENCE SCALE:
+    ┌────────────────────────────────────────────────────────┐
+    │  0%          50%               80%              100%  │
+    │  ├───── 🔴 ────┼────── 🟡 ───────┼────── 🟢 ──────┤  │
+    │    Red (<50%)    Yellow (50-79%)    Green (≥80%)       │
+    └────────────────────────────────────────────────────────┘
+
+  FUNCTIONS:
+  ┌────────────────────────┬───────────────────────────────────────────────┐
+  │ Function               │ Description                                   │
+  ├────────────────────────┼───────────────────────────────────────────────┤
+  │ fetchData()            │ Loads learning stats + up to 50 insights      │
+  │ handleAnalyze()        │ Submits conversation text for insight         │
+  │                        │ extraction via POST /self-learning/analyze    │
+  │ handleImprove()        │ Generates actionable improvement suggestions  │
+  │                        │ via POST /self-learning/improve               │
+  └────────────────────────┴───────────────────────────────────────────────┘
+
+  FEATURES:
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │ Feature                  │ Description                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Stats dashboard          │ 4 cards: Total Insights · Analyses Run ·     │
+  │                          │ Applied Insights · Patterns Detected         │
+  │ Analyze Conversation     │ Text input to feed conversations for         │
+  │                          │ learning analysis                            │
+  │ "Extract Insights" btn   │ AI-powered insight extraction from text      │
+  │ Improvement Suggestions  │ One-click improvement generation card        │
+  │ "Generate Improvements"  │ Produces actionable recommendations          │
+  │ Improvements display     │ Green-bordered cards listing suggestions     │
+  │ Insights list            │ Cards: type icon · badge · confidence% ·     │
+  │                          │ timestamp · description                      │
+  │ Confidence color coding  │ 🟢 ≥80%  ·  🟡 ≥50%  ·  🔴 <50%            │
+  │ Suggested actions        │ Actionable suggestions per insight           │
+  │ Refresh button           │ Manual data reload                           │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  UI LAYOUT:
+    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │ Total    │  │ Analyses │  │ Applied  │  │ Patterns │
+    │ Insights │  │   Run    │  │ Insights │  │ Detected │
+    │    24    │  │    8     │  │    12    │  │    6     │
+    └──────────┘  └──────────┘  └──────────┘  └──────────┘
+
+    ┌─────────────────────────────────┐
+    │ 🧠 Analyze Conversation          │
+    │ [_____________________________] │
+    │ [💡 Extract Insights]            │
+    └─────────────────────────────────┘
+
+    ┌─────────────────────────────────┐
+    │ 📈 Improvement Suggestions      │
+    │ [✨ Generate Improvements]       │
+    │ ┌─────────────────────────────┐ │
+    │ │ ✓ Optimize response time    │ │
+    │ │ ✓ Add memory for topics...  │ │
+    │ └─────────────────────────────┘ │
+    └─────────────────────────────────┘
+
+
+████████████████████████████████████████████████████████████████████████████████
+█                              APPENDIX                                       █
+████████████████████████████████████████████████████████████████████████████████
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  A. NAVIGATION MAP — ALL ROUTES
+═══════════════════════════════════════════════════════════════════════════════
+
+  /dashboard/fazle
+  ├── /                         → Overview (stat cards)
+  ├── /agents                   → Agent Manager (CRUD)
+  ├── /memory                   → Memory Manager (CRUD + lock)
+  ├── /tasks                    → Task Scheduler (CRUD + cron)
+  ├── /persona                  → Persona Editor (form)
+  ├── /tools                    → Plugin Manager (CRUD + upload)
+  │
+  │   ── Phase 5 ──
+  ├── /autonomy                 → Autonomy Engine (plans)
+  ├── /autonomous-tasks         → Autonomous Tasks (scheduled)
+  ├── /knowledge-graph          → Knowledge Graph (entities)
+  └── /learning                 → Self-Learning (insights)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  B. SUMMARY MATRIX
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌────┬─────────────────────┬──────────────────────────────┬───────┬───────────────────────────────────────────────┐
+  │ #  │ Page                │ Route                        │ Phase │ Key Capabilities                              │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  1 │ Overview            │ /dashboard/fazle             │  1-4  │ 5 stat cards (agents, memories, tasks,         │
+  │    │                     │                              │       │ latency, conversations)                       │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  2 │ Agent Manager       │ /dashboard/fazle/agents      │  1-4  │ CRUD agents, 7 model options, toggle          │
+  │    │                     │                              │       │ enable, priority 0-100                        │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  3 │ Memory Manager      │ /dashboard/fazle/memory      │  1-4  │ CRUD memories, lock/unlock, 4 types           │
+  │    │                     │                              │       │ (knowledge, conversation, preference, fact)    │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  4 │ Task Scheduler      │ /dashboard/fazle/tasks       │  1-4  │ CRUD cron tasks, 6 presets, pause/resume,     │
+  │    │                     │                              │       │ last run / next run tracking                  │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  5 │ Persona Editor      │ /dashboard/fazle/persona     │  1-4  │ Edit AI name, tone, language, speaking        │
+  │    │                     │                              │       │ style, knowledge notes                        │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  6 │ Plugin Manager      │ /dashboard/fazle/tools       │  1-4  │ CRUD plugins, JSON manifest upload,           │
+  │    │                     │                              │       │ enable toggle, version tracking               │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  7 │ Autonomy Engine     │ /dashboard/fazle/autonomy    │   5   │ Create/execute goal-based plans, step         │
+  │    │                     │                              │       │ decomposition, plan detail + reflection       │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  8 │ Autonomous Tasks    │ /dashboard/fazle/             │   5   │ 6 task types, interval scheduling,            │
+  │    │                     │ autonomous-tasks             │       │ run/pause/delete, execution history           │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │  9 │ Knowledge Graph     │ /dashboard/fazle/             │   5   │ NLP entity extraction, 8 node types,          │
+  │    │                     │ knowledge-graph              │       │ query + filter, relationship mapping          │
+  ├────┼─────────────────────┼──────────────────────────────┼───────┼───────────────────────────────────────────────┤
+  │ 10 │ Self-Learning       │ /dashboard/fazle/learning    │   5   │ Conversation analysis, 7 insight types,       │
+  │    │                     │                              │       │ confidence scoring, improvement generation    │
+  └────┴─────────────────────┴──────────────────────────────┴───────┴───────────────────────────────────────────────┘
+
+  TOTALS:
+    • 10 dashboard pages
+    • 6 core CRUD pages (Phase 1-4)
+    • 4 autonomous AI pages (Phase 5)
+    • 28+ API-connected functions
+    • 5 backend microservices (Phase 5 ports 9100-9500)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  C. TECH STACK
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────┬──────────────────────────────────────────────────┐
+  │ Layer               │ Technology                                       │
+  ├─────────────────────┼──────────────────────────────────────────────────┤
+  │ Framework           │ Next.js 14 (App Router)                          │
+  │ Language            │ TypeScript (strict mode)                         │
+  │ Styling             │ Tailwind CSS + shadcn/ui components              │
+  │ State Management    │ React Query (TanStack Query) + React hooks       │
+  │ Forms               │ React Hook Form + Zod schema validation          │
+  │ Data Tables         │ TanStack Table (search, sort, paginate)          │
+  │ Icons               │ Lucide React                                     │
+  │ API Layer           │ Custom apiGet/apiPost/apiDelete helpers           │
+  │ Auth                │ API key header (X-API-Key)                       │
+  │ Backend Gateway     │ fazle-api (:8100) proxy → microservices          │
+  └─────────────────────┴──────────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+  Generated: March 20, 2026
+  Pages: 10 total (6 Core + 4 Phase 5)
+  Total Functions: 28+
+  Total Features: 80+
+════════════════════════════════════════════════════════════════════════════════

@@ -420,3 +420,75 @@ async def get_permissions():
 async def get_execution_log(limit: int = 50):
     """Get recent tool execution log."""
     return {"log": _execution_log[-limit:], "total": len(_execution_log)}
+
+
+# ── Marketplace Endpoints ────────────────────────────────────
+
+@app.get("/marketplace/tools")
+async def marketplace_list():
+    """List all tools with marketplace metadata."""
+    tools_list = []
+    for t in _tools.values():
+        tools_list.append({
+            "id": t.id,
+            "name": t.name,
+            "category": t.category.value if hasattr(t.category, 'value') else str(t.category),
+            "description": t.description,
+            "version": "1.0.0",
+            "enabled": t.enabled,
+            "installed": True,
+            "requires_approval": t.requires_approval,
+            "status": t.status.value if hasattr(t.status, 'value') else str(t.status),
+            "usage_count": t.usage_count,
+            "last_used": t.last_used,
+        })
+    return {"tools": tools_list}
+
+
+@app.post("/marketplace/tools/install")
+async def marketplace_install(body: dict):
+    """Install a new tool by name (register in the engine)."""
+    tool_name = body.get("tool_name", body.get("name", ""))
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+    if tool_name in _tools:
+        return {"status": "already_installed", "tool": tool_name}
+    new_tool = ToolDefinition(
+        name=tool_name,
+        category=ToolCategory(body.get("category", "http_request")),
+        description=body.get("description", f"User-installed tool: {tool_name}"),
+        enabled=True,
+    )
+    _tools[tool_name] = new_tool
+    return {"status": "installed", "tool": tool_name}
+
+
+@app.post("/marketplace/tools/{tool_name}/enable")
+async def marketplace_enable(tool_name: str):
+    """Enable a specific tool."""
+    tool = _tools.get(tool_name)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    tool.enabled = True
+    tool.status = ToolStatus.available
+    return {"tool": tool_name, "enabled": True}
+
+
+@app.post("/marketplace/tools/{tool_name}/disable")
+async def marketplace_disable(tool_name: str):
+    """Disable a specific tool."""
+    tool = _tools.get(tool_name)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    tool.enabled = False
+    tool.status = ToolStatus.disabled
+    return {"tool": tool_name, "enabled": False}
+
+
+@app.delete("/marketplace/tools/{tool_name}")
+async def marketplace_remove(tool_name: str):
+    """Remove/uninstall a tool."""
+    if tool_name not in _tools:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    del _tools[tool_name]
+    return {"status": "removed", "tool": tool_name}

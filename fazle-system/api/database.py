@@ -602,3 +602,81 @@ def get_dashboard_stats() -> dict:
                 "total_conversations": total_conversations,
                 "total_users": total_users,
             }
+
+
+# ── Password Management ────────────────────────────────────
+
+def ensure_password_reset_table():
+    """Create the password_reset_tokens table (idempotent)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fazle_password_reset_tokens (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES fazle_users(id) ON DELETE CASCADE,
+                    token_hash VARCHAR(255) NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used BOOLEAN DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON fazle_password_reset_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS idx_pw_reset_expires ON fazle_password_reset_tokens (expires_at);
+            """)
+        conn.commit()
+    logger.info("fazle_password_reset_tokens table ensured")
+
+
+def update_user_password(user_id: str, hashed_password: str) -> bool:
+    """Update a user's hashed password. Returns True if updated."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE fazle_users SET hashed_password = %s, updated_at = NOW() WHERE id = %s",
+                (hashed_password, user_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+
+def create_password_reset_token(user_id: str, token_hash: str, expires_at) -> dict:
+    """Store a hashed password reset token."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # Invalidate any existing tokens for this user
+            cur.execute(
+                "UPDATE fazle_password_reset_tokens SET used = true WHERE user_id = %s AND used = false",
+                (user_id,),
+            )
+            cur.execute(
+                """INSERT INTO fazle_password_reset_tokens (user_id, token_hash, expires_at)
+                   VALUES (%s, %s, %s) RETURNING id, user_id, expires_at, created_at""",
+                (user_id, token_hash, expires_at),
+            )
+            conn.commit()
+            return dict(cur.fetchone())
+
+
+def get_valid_reset_token(token_hash: str) -> Optional[dict]:
+    """Find a valid (unused, non-expired) reset token by hash."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT t.id, t.user_id, t.expires_at, u.email
+                   FROM fazle_password_reset_tokens t
+                   JOIN fazle_users u ON u.id = t.user_id
+                   WHERE t.token_hash = %s AND t.used = false AND t.expires_at > NOW()""",
+                (token_hash,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def mark_reset_token_used(token_id: str) -> None:
+    """Mark a reset token as used."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE fazle_password_reset_tokens SET used = true WHERE id = %s",
+                (token_id,),
+            )
+            conn.commit()
