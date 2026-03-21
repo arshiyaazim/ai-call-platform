@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Deletion — Dograh | iamazim.com</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif; line-height: 1.7; color: #1a1a2e; background: #f8f9fa; }
+        .container { max-width: 800px; margin: 0 auto; padding: 40px 24px 80px; }
+        h1 { font-size: 2rem; margin-bottom: 8px; color: #0f0f23; }
+        .updated { color: #666; font-size: 0.9rem; margin-bottom: 32px; }
+        h2 { font-size: 1.25rem; margin: 32px 0 12px; color: #16213e; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+        p, li { margin-bottom: 10px; color: #333; }
+        ul, ol { padding-left: 24px; }
+        a { color: #2563eb; }
+        .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin: 20px 0; }
+        .card h3 { margin-bottom: 12px; color: #16213e; }
+        .back { display: inline-block; margin-top: 40px; color: #2563eb; text-decoration: none; }
+        .note { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>User Data Deletion</h1>
+<p class="updated">Last updated: March 22, 2026</p>
+
+<p>At <strong>Dograh</strong> (<strong>iamazim.com</strong>), we respect your right to control your personal data. You can request deletion of all data associated with your account at any time. This page explains how to submit a data deletion request and what happens when you do.</p>
+
+<h2>What Data We Delete</h2>
+<p>When you request data deletion, we permanently remove:</p>
+<ul>
+    <li>Your user account and profile information.</li>
+    <li>All conversation history and voice call transcripts.</li>
+    <li>Semantic memory and knowledge graph entries linked to your account.</li>
+    <li>Your linked platform identities (Facebook ID, WhatsApp ID, phone number).</li>
+    <li>Consent records and preferences.</li>
+    <li>All stored files and media associated with your account.</li>
+</ul>
+
+<h2>How to Request Data Deletion</h2>
+
+<div class="card">
+    <h3>Option 1 — Email Us</h3>
+    <p>Send a data deletion request to <a href="mailto:privacy@iamazim.com">privacy@iamazim.com</a> from the email address associated with your account. Include:</p>
+    <ul>
+        <li>Subject line: <strong>"Data Deletion Request"</strong></li>
+        <li>Your registered email address or account identifier.</li>
+        <li>The platform(s) you used (e.g., WhatsApp, Facebook, web).</li>
+    </ul>
+</div>
+
+<div class="card">
+    <h3>Option 2 — API Request</h3>
+    <p>If you have API access, submit a deletion request to:</p>
+    <p><code>DELETE https://api.iamazim.com/api/v1/gdpr/delete</code></p>
+    <p>with your authentication token. This triggers soft-deletion with a 30-day grace period before permanent removal.</p>
+</div>
+
+<div class="card">
+    <h3>Option 3 — Facebook / WhatsApp Callback</h3>
+    <p>If you connected via Facebook or WhatsApp, you can also use the platform's built-in data deletion tools:</p>
+    <ul>
+        <li><strong>Facebook:</strong> Go to <em>Settings &rarr; Apps and Websites</em>, find Dograh, and click "Remove". Facebook will send us a deletion callback which we process automatically.</li>
+        <li><strong>WhatsApp:</strong> Contact us at <a href="mailto:privacy@iamazim.com">privacy@iamazim.com</a> with your WhatsApp phone number to request deletion.</li>
+    </ul>
+</div>
+
+<h2>Facebook Data Deletion Callback</h2>
+<p>We support Meta's Data Deletion Request Callback. When you remove the Dograh app via Facebook settings, we automatically:</p>
+<ol>
+    <li>Receive the signed deletion request from Facebook.</li>
+    <li>Delete all data associated with your Facebook user ID, including messages, profile data, and linked identities.</li>
+    <li>Provide a confirmation code that you can use to check the status of your deletion at:<br>
+        <code>https://iamazim.com/api/fazle/gdpr/deletion-status?code=YOUR_CODE</code></li>
+</ol>
+
+<h2>Deletion Timeline</h2>
+<div class="note">
+    <strong>Grace Period:</strong> Account deletions include a 30-day grace period during which you can cancel the request and reactivate your account. After 30 days, all data is permanently and irreversibly deleted.
+</div>
+<ul>
+    <li><strong>Email requests:</strong> Processed within 5 business days.</li>
+    <li><strong>API requests:</strong> Processed immediately (soft-delete), permanent after 30 days.</li>
+    <li><strong>Facebook callback:</strong> Processed automatically upon receipt, typically within minutes.</li>
+</ul>
+
+<h2>Verification</h2>
+<p>For security, we may ask you to verify your identity before processing a deletion request. This helps ensure that only authorized individuals can request data removal.</p>
+
+<h2>What We May Retain</h2>
+<p>After deletion, we may retain minimal data only when required by law (e.g., fraud prevention, legal compliance, or regulatory obligations). Any retained data will be isolated and deleted once the legal requirement expires.</p>
+
+<h2>Contact Us</h2>
+<p>If you have questions about data deletion or your privacy rights, reach out to:</p>
+<ul>
+    <li>Email: <a href="mailto:privacy@iamazim.com">privacy@iamazim.com</a></li>
+    <li>Privacy Policy: <a href="/legal/privacy-policy">iamazim.com/legal/privacy-policy</a></li>
+    <li>Terms of Service: <a href="/legal/terms-of-service">iamazim.com/legal/terms-of-service</a></li>
+</ul>
+
+<a class="back" href="/">&larr; Back to Dograh</a>
+</div>
+</body>
+</html>
