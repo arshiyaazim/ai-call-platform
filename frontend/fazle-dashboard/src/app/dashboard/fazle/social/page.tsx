@@ -220,15 +220,12 @@ function IntegrationsTab({ onMsg }: { onMsg: (text: string, type?: 'success' | '
   const handleSave = async (platform: string) => {
     setSaving(platform);
     try {
-      const data = platform === 'whatsapp'
-        ? { platform, ...waForm }
-        : { platform, ...fbForm };
-      // Remove empty secret fields so we don't overwrite with empty
-      const cleaned: Record<string, string> = { platform };
-      for (const [k, v] of Object.entries(data)) {
-        if (v) cleaned[k] = v;
+      const form = platform === 'whatsapp' ? waForm : fbForm;
+      const payload: Partial<SocialIntegration> & { platform: string } = { platform };
+      for (const [k, v] of Object.entries(form)) {
+        if (v) (payload as Record<string, string>)[k] = v;
       }
-      await socialService.saveIntegration(cleaned as Partial<SocialIntegration> & { platform: string });
+      await socialService.saveIntegration(payload);
       onMsg(`${platform} integration saved`);
       fetchIntegrations();
     } catch {
