@@ -753,11 +753,13 @@ def ensure_gdpr_tables():
             ]
             for col, typ in gdpr_cols:
                 try:
+                    cur.execute(f"SAVEPOINT sp_{col}")
                     cur.execute(
                         f"ALTER TABLE gdpr_requests ADD COLUMN IF NOT EXISTS {col} {typ}"
                     )
+                    cur.execute(f"RELEASE SAVEPOINT sp_{col}")
                 except Exception:
-                    conn.rollback()
+                    cur.execute(f"ROLLBACK TO SAVEPOINT sp_{col}")
         conn.commit()
     logger.info("GDPR tables ensured (gdpr_requests, gdpr_audit_logs, user_consents, user_identities)")
 
@@ -1088,11 +1090,13 @@ def ensure_soft_delete_columns():
                 ("deletion_scheduled_at", "TIMESTAMPTZ"),
             ]:
                 try:
+                    cur.execute(f"SAVEPOINT sp_{col}")
                     cur.execute(
                         f"ALTER TABLE fazle_users ADD COLUMN IF NOT EXISTS {col} {typ}"
                     )
+                    cur.execute(f"RELEASE SAVEPOINT sp_{col}")
                 except Exception:
-                    conn.rollback()
+                    cur.execute(f"ROLLBACK TO SAVEPOINT sp_{col}")
         conn.commit()
 
 
