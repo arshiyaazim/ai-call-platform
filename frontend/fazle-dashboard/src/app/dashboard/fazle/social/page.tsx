@@ -160,6 +160,9 @@ export default function SocialPage() {
 
 /* ─── Integrations Tab ─────────────────────────────────── */
 
+const WA_WEBHOOK_URL = 'https://fazle.iamazim.com/api/fazle/social/whatsapp/webhook';
+const FB_WEBHOOK_URL = 'https://fazle.iamazim.com/api/fazle/social/facebook/webhook';
+
 function IntegrationsTab({ onMsg }: { onMsg: (text: string, type?: 'success' | 'error') => void }) {
   const [integrations, setIntegrations] = React.useState<SocialIntegration[]>([]);
   const [loadingInt, setLoadingInt] = React.useState(true);
@@ -170,13 +173,13 @@ function IntegrationsTab({ onMsg }: { onMsg: (text: string, type?: 'success' | '
   // WhatsApp form
   const [waForm, setWaForm] = React.useState({
     app_id: '', app_secret: '', access_token: '', phone_number: '',
-    phone_number_id: '', waba_id: '', verify_token: '', webhook_url: '',
+    phone_number_id: '', waba_id: '', verify_token: '', webhook_url: WA_WEBHOOK_URL,
   });
 
   // Facebook form
   const [fbForm, setFbForm] = React.useState({
     app_id: '', app_secret: '', access_token: '', page_id: '',
-    verify_token: '', webhook_url: '',
+    verify_token: '', webhook_url: FB_WEBHOOK_URL,
   });
 
   const fetchIntegrations = React.useCallback(async () => {
@@ -194,7 +197,7 @@ function IntegrationsTab({ onMsg }: { onMsg: (text: string, type?: 'success' | '
           phone_number_id: wa.phone_number_id || '',
           waba_id: wa.waba_id || '',
           verify_token: wa.verify_token || '',
-          webhook_url: wa.webhook_url || '',
+          webhook_url: wa.webhook_url || WA_WEBHOOK_URL,
         });
       }
       const fb = data.integrations?.find((i: SocialIntegration) => i.platform === 'facebook');
@@ -205,7 +208,7 @@ function IntegrationsTab({ onMsg }: { onMsg: (text: string, type?: 'success' | '
           access_token: '',
           page_id: fb.page_id || '',
           verify_token: fb.verify_token || '',
-          webhook_url: fb.webhook_url || '',
+          webhook_url: fb.webhook_url || FB_WEBHOOK_URL,
         });
       }
     } catch {

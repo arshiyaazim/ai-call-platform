@@ -3,10 +3,14 @@
 .env.local
 .env.production
 .env.*
+!.env.example
 New VPS Password.txt
 *.pem
 *.key
 *.crt
+*.secure
+contacts.csv
+as on*
 
 # Local validation workspace
 local-validation/

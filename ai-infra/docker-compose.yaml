@@ -342,8 +342,8 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards-provisioned:ro
-      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards-fazle-ai:ro
+      - ../configs/grafana/dashboards/infra:/var/lib/grafana/dashboards-provisioned:ro
+      - ../configs/grafana/dashboards/fazle-ai:/var/lib/grafana/dashboards-fazle-ai:ro
     logging:
       driver: "json-file"
       options:

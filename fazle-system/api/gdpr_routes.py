@@ -569,7 +569,7 @@ async def facebook_data_deletion(request: Request, background_tasks: BackgroundT
         create_facebook_deletion_request(fb_user_id, confirmation_code, deleted_tables)
 
         return JSONResponse(content={
-            "url": f"https://iamazim.com/deletion-status/{confirmation_code}",
+            "url": f"https://fazle.iamazim.com/deletion-status/{confirmation_code}",
             "confirmation_code": confirmation_code,
         })
 

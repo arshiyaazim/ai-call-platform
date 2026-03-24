@@ -26,8 +26,18 @@ def _load_service(service_name: str) -> "module":
 
 
 # Pre-load all Phase-5 services so test files can import them by alias
-autonomy_engine = _load_service("autonomy-engine")
-tool_engine = _load_service("tool-engine")
-knowledge_graph = _load_service("knowledge-graph")
-autonomous_runner = _load_service("autonomous-runner")
-self_learning = _load_service("self-learning")
+# Missing deps (e.g. outside Docker) are tolerated — tests that use these
+# will fail at import time with a clear error rather than crashing the suite.
+def _try_load(name: str):
+    try:
+        return _load_service(name)
+    except Exception as exc:
+        import warnings
+        warnings.warn(f"Could not pre-load service '{name}': {exc}")
+        return None
+
+autonomy_engine = _try_load("autonomy-engine")
+tool_engine = _try_load("tool-engine")
+knowledge_graph = _try_load("knowledge-graph")
+autonomous_runner = _try_load("autonomous-runner")
+self_learning = _try_load("self-learning")

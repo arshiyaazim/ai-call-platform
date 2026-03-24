@@ -5,7 +5,10 @@
 from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+import hashlib
+import hmac
 import httpx
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -40,6 +43,9 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
     facebook_page_access_token: str = ""
     facebook_page_id: str = ""
+    # Webhook security
+    verify_token: str = ""  # SOCIAL_VERIFY_TOKEN
+    meta_app_secret: str = ""  # SOCIAL_META_APP_SECRET — used for HMAC validation
 
     class Config:
         env_prefix = "SOCIAL_"
@@ -179,6 +185,16 @@ async def health():
 
 
 # ── Helpers ────────────────────────────────────────────────
+def _verify_meta_signature(raw_body: bytes, app_secret: str, header: str) -> bool:
+    """Validate X-Hub-Signature-256 from Meta. Returns False if secret missing or signature invalid."""
+    if not app_secret:
+        return False
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
+
+
 def _get_integration_creds(platform: str) -> dict:
     """Get decrypted credentials for a platform from DB or env fallback."""
     with _get_conn() as conn:
@@ -414,9 +430,9 @@ async def whatsapp_webhook_verify(request: Request):
     token = params.get("hub.verify_token", "")
     challenge = params.get("hub.challenge", "")
 
-    # Check verify_token against DB or env
+    # Check verify_token: DB value takes priority, env is fallback
     creds = _get_integration_creds("whatsapp")
-    expected_token = creds.get("verify_token", "")
+    expected_token = creds.get("verify_token") or settings.verify_token
     if not expected_token:
         raise HTTPException(status_code=403, detail="Verify token not configured")
 
@@ -427,8 +443,15 @@ async def whatsapp_webhook_verify(request: Request):
 
 @app.post("/whatsapp/webhook")
 async def whatsapp_webhook_receive(request: Request):
-    """Receive incoming WhatsApp messages via Meta webhook."""
-    payload = await request.json()
+    """Receive incoming WhatsApp messages via Meta webhook. Validates X-Hub-Signature-256."""
+    raw_body = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    creds = _get_integration_creds("whatsapp")
+    app_secret = creds.get("app_secret") or settings.meta_app_secret
+    if not _verify_meta_signature(raw_body, app_secret, sig_header):
+        logger.warning("WhatsApp webhook: invalid or missing HMAC signature")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    payload = json.loads(raw_body)
     result = await handle_whatsapp_webhook(payload, _get_conn, settings.brain_url, _get_integration_creds)
     # Trigger workflow automation
     await trigger_workflow(settings.workflow_engine_url, "whatsapp.message.received", result)
@@ -444,7 +467,7 @@ async def facebook_webhook_verify(request: Request):
     challenge = params.get("hub.challenge", "")
 
     creds = _get_integration_creds("facebook")
-    expected_token = creds.get("verify_token", "")
+    expected_token = creds.get("verify_token") or settings.verify_token
     if not expected_token:
         raise HTTPException(status_code=403, detail="Verify token not configured")
 
@@ -455,8 +478,15 @@ async def facebook_webhook_verify(request: Request):
 
 @app.post("/facebook/webhook")
 async def facebook_webhook_receive(request: Request):
-    """Receive incoming Facebook events via webhook."""
-    payload = await request.json()
+    """Receive incoming Facebook events via webhook. Validates X-Hub-Signature-256."""
+    raw_body = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    creds = _get_integration_creds("facebook")
+    app_secret = creds.get("app_secret") or settings.meta_app_secret
+    if not _verify_meta_signature(raw_body, app_secret, sig_header):
+        logger.warning("Facebook webhook: invalid or missing HMAC signature")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    payload = json.loads(raw_body)
     result = await handle_facebook_webhook(payload, _get_conn, settings.brain_url, _get_integration_creds)
     await trigger_workflow(settings.workflow_engine_url, "facebook.comment.received", result)
     return {"status": "ok"}

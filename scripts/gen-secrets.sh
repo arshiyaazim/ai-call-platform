@@ -29,6 +29,8 @@ MANAGED_SECRETS=(
   "FAZLE_JWT_SECRET:48:key"
   "NEXTAUTH_SECRET:48:key"
   "GRAFANA_PASSWORD:24:key"
+  "SOCIAL_ENCRYPTION_KEY:32:key"
+  "SOCIAL_VERIFY_TOKEN:32:key"
 )
 
 # ── Defaults ────────────────────────────────────────────────

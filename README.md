@@ -709,6 +709,141 @@ Additional configs:
 
 ---
 
+## First-Time Platform Setup
+
+### 1. Open Dashboard
+- Go to https://iamazim.com
+- Create admin account
+
+### 2. Configure API Keys (Dashboard → Settings)
+- **OpenAI API Key** — for LLM responses
+- **Twilio credentials** — Account SID + Auth Token
+- **ElevenLabs** (optional) — for voice cloning TTS
+
+### 3. Configure LiveKit (Dashboard → Settings → Voice)
+- LiveKit URL: `wss://livekit.iamazim.com`
+- API Key: (from your `.env` `LIVEKIT_API_KEY`)
+- API Secret: (from your `.env` `LIVEKIT_API_SECRET`)
+
+### 4. Create AI Agent
+1. Click "New Agent" → "Inbound"
+2. Paste content from `personality/personality.md` as system prompt
+3. Select LLM: GPT-4o / GPT-4o-mini
+4. Select TTS: Deepgram / ElevenLabs
+5. Select STT: Deepgram
+6. Save and test with "Web Call"
+
+### 5. Connect Twilio Phone Number
+1. Dashboard → Settings → Telephony → Add Twilio
+2. Enter Account SID + Auth Token
+3. Purchase/assign phone number
+4. Dograh auto-configures the webhook
+
+---
+
+## Management Commands
+
+```bash
+cd /home/azim/ai-call-platform
+
+# ── Deploy & Status ────────────────────────────────────────
+bash scripts/deploy.sh              # Full deploy
+bash scripts/deploy.sh status       # Service status + resource usage
+bash scripts/deploy.sh restart      # Restart all services
+bash scripts/deploy.sh update fazle # Rolling update Fazle only
+bash scripts/deploy.sh logs         # Tail all logs
+bash scripts/deploy.sh logs fazle-api  # Tail specific service
+
+# ── Monitoring & Logs ──────────────────────────────────────
+# Grafana: https://iamazim.com/grafana/ (change admin password on first login!)
+docker stats --no-stream
+
+# ── Backups (auto-scheduled via cron) ──────────────────────
+bash scripts/backup.sh              # Manual backup
+# Cron: 0 2 * * * /home/azim/ai-call-platform/scripts/backup.sh
+
+# ── Health check ───────────────────────────────────────────
+bash scripts/health-check.sh
+```
+
+---
+
+## Redis Database Allocation
+
+| DB | Service | Purpose |
+|----|---------|---------|
+| 0 | Default (Dograh, LiveKit) | Session data, coordination |
+| 1 | Fazle Brain | Conversation cache (24h TTL) |
+| 2 | Fazle Trainer | Training session tracking |
+| 3 | LLM Gateway | Response cache (300s TTL), rate limits (10 req/s), usage stats |
+| 4 | Learning Engine | Relationship graph, user corrections |
+| 5 | Queue + Workers | Redis Streams for async LLM requests |
+
+---
+
+## Resource Limits
+
+| Service          | CPU  | Memory | Reserved |
+|------------------|------|--------|----------|
+| PostgreSQL       | 2    | 2 GB   | 512 MB   |
+| Redis            | 1    | 768 MB | 256 MB   |
+| MinIO            | 1    | 1 GB   | 256 MB   |
+| LiveKit          | 2    | 1 GB   | 256 MB   |
+| Coturn           | 1    | 512 MB | 128 MB   |
+| Ollama           | 4    | 6 GB   | 2 GB     |
+| Qdrant           | 1    | 1 GB   | 256 MB   |
+| Fazle Brain      | 2    | 1 GB   | 256 MB   |
+| Fazle API        | 1    | 512 MB | 128 MB   |
+| Fazle Memory     | 1    | 512 MB | 128 MB   |
+| Fazle Tasks      | 0.5  | 512 MB | 128 MB   |
+| Fazle Web Intel  | 0.5  | 512 MB | 128 MB   |
+| Fazle Trainer    | 1    | 512 MB | 128 MB   |
+| Fazle Voice      | 1    | 512 MB | 128 MB   |
+| Fazle UI         | 0.5  | 256 MB | 128 MB   |
+| LLM Gateway      | 1    | 1 GB   | 256 MB   |
+| Learning Engine  | 0.5  | 512 MB | 128 MB   |
+| Queue            | 0.5  | 512 MB | 128 MB   |
+| Workers ×2       | 1 ea | 1 GB ea| 256 MB ea|
+| Prometheus       | 0.5  | 512 MB | 256 MB   |
+| Grafana          | 0.5  | 256 MB | 128 MB   |
+| Loki             | 0.5  | 512 MB | 256 MB   |
+
+### Ollama Resource Protection
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| NUM_PARALLEL | 1 | Prevent RAM exhaustion on 7.8GB VPS |
+| MAX_LOADED_MODELS | 1 | Only load one model at a time |
+| MAX_QUEUE | 2 | Prevent request pile-up |
+| Memory limit | 6 GB | Hard ceiling |
+| Installed model | qwen2.5:3b (1.9GB) | Only model on VPS |
+
+---
+
+## Troubleshooting
+
+### LiveKit not connecting
+```bash
+docker logs livekit --tail 50
+ss -tlnp | grep 7881
+curl -i https://livekit.iamazim.com
+```
+
+### TURN server issues
+```bash
+docker logs coturn --tail 50
+stun turn.iamazim.com:3478
+openssl s_client -connect turn.iamazim.com:5349
+```
+
+### Call quality problems
+- Check API response time: `curl -w "%{time_total}" https://api.iamazim.com/api/v1/health`
+- Check LiveKit connectivity: Browser DevTools → Network → WS tab
+- Check TURN relay: LiveKit dashboard → Room details
+- Monitor resources: `docker stats --no-stream`
+
+---
+
 ## Roadmap
 
 ### Completed

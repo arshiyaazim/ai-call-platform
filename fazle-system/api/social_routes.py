@@ -100,8 +100,23 @@ async def whatsapp_webhook_verify(request: Request):
 @router.post("/whatsapp/webhook")
 async def whatsapp_webhook_receive(request: Request):
     """Public endpoint: Meta sends POST for incoming WhatsApp messages."""
-    payload = await request.json()
-    return await _proxy("post", "/whatsapp/webhook", json=payload, timeout=30.0)
+    raw_body = await request.body()
+    forward_headers = {}
+    sig = request.headers.get("X-Hub-Signature-256")
+    if sig:
+        forward_headers["X-Hub-Signature-256"] = sig
+    settings = _get_settings()
+    url = f"{settings.social_engine_url}/whatsapp/webhook"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(url, content=raw_body, headers=forward_headers)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        except httpx.HTTPError as e:
+            logger.error(f"WhatsApp webhook receive error: {e}")
+            raise HTTPException(status_code=502, detail="Social engine unavailable")
 
 
 @router.get("/facebook/webhook")
@@ -123,8 +138,23 @@ async def facebook_webhook_verify(request: Request):
 @router.post("/facebook/webhook")
 async def facebook_webhook_receive(request: Request):
     """Public endpoint: Meta sends POST for incoming Facebook events."""
-    payload = await request.json()
-    return await _proxy("post", "/facebook/webhook", json=payload, timeout=30.0)
+    raw_body = await request.body()
+    forward_headers = {}
+    sig = request.headers.get("X-Hub-Signature-256")
+    if sig:
+        forward_headers["X-Hub-Signature-256"] = sig
+    settings = _get_settings()
+    url = f"{settings.social_engine_url}/facebook/webhook"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(url, content=raw_body, headers=forward_headers)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        except httpx.HTTPError as e:
+            logger.error(f"Facebook webhook receive error: {e}")
+            raise HTTPException(status_code=502, detail="Social engine unavailable")
 
 
 # ── WhatsApp ────────────────────────────────────────────────

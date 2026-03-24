@@ -1,19 +1,21 @@
 import urllib.request, json
 
-# Test 1: /fazle/admin/login with wrong creds
-data = json.dumps({"username": "test@test.com", "password": "wrong"}).encode()
-req = urllib.request.Request("http://127.0.0.1:8100/fazle/admin/login", data=data, headers={"Content-Type": "application/json"})
+# Test via nginx proxy (same path the UI calls)
+data = json.dumps({"username": "azim@iamazim.com", "password": "wrong"}).encode()
+req = urllib.request.Request("https://fazle.iamazim.com/api/fazle/admin/login", data=data, headers={"Content-Type": "application/json"})
 try:
     resp = urllib.request.urlopen(req)
-    print("TEST1:", resp.status, resp.read().decode())
+    print("NGINX_TEST:", resp.status, resp.read().decode())
 except urllib.error.HTTPError as e:
-    print("TEST1:", e.code, e.read().decode())
+    print("NGINX_TEST:", e.code, e.read().decode())
+except Exception as e:
+    print("NGINX_TEST ERROR:", str(e))
 
-# Test 2: /fazle/admin/login via nginx proxy path
-data2 = json.dumps({"username": "test@test.com", "password": "wrong"}).encode()
-req2 = urllib.request.Request("http://127.0.0.1:3020/api/fazle/admin/login", data=data2, headers={"Content-Type": "application/json"})
+# Test direct API (bypass nginx)
+data2 = json.dumps({"username": "azim@iamazim.com", "password": "wrong"}).encode()
+req2 = urllib.request.Request("http://127.0.0.1:8100/fazle/admin/login", data=data2, headers={"Content-Type": "application/json"})
 try:
     resp2 = urllib.request.urlopen(req2)
-    print("TEST2:", resp2.status, resp2.read().decode())
+    print("DIRECT_TEST:", resp2.status, resp2.read().decode())
 except urllib.error.HTTPError as e:
-    print("TEST2:", e.code, e.read().decode())
+    print("DIRECT_TEST:", e.code, e.read().decode())

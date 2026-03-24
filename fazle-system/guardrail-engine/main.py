@@ -28,7 +28,7 @@ settings = Settings()
 app = FastAPI(title="Fazle AI Safety Guardrail Engine", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://iamazim.com", "https://fazle.iamazim.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
