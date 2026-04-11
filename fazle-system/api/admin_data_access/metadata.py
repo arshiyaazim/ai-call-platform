@@ -157,6 +157,7 @@ _register(TableMeta(
     delete_policy=DeletePolicy.DISALLOW,
     singleton=True,
     audit_event_prefix="maintenance_persona",
+    order_by="updated_at DESC",
     description="AI persona configuration (single row)",
     columns=[
         _col("id", "ID", "integer", immutable=True),
