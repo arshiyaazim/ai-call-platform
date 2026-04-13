@@ -317,6 +317,7 @@ class VoiceBrainManager:
         Chunks the response for natural TTS delivery.
         """
         full_response = ""
+        llm_start = time.monotonic()
 
         if is_complex_query(message):
             # Full pipeline: persona + memory + streaming
@@ -324,6 +325,9 @@ class VoiceBrainManager:
         else:
             # Fast path: direct Ollama, <500ms
             full_response = await self._call_brain_fast(message)
+
+        llm_ms = int((time.monotonic() - llm_start) * 1000)
+        logger.info(f"[LATENCY] LLM response: {llm_ms}ms | complex={is_complex_query(message)} | len={len(full_response)}")
 
         if not full_response:
             full_response = "দুঃখিত, আবার বলবেন?"

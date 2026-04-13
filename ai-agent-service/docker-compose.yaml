@@ -1,0 +1,63 @@
+services:
+  ai-agent-service:
+    build: .
+    container_name: ai-agent-service
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:3200:3200"
+    environment:
+      AI_ENABLED: "${AI_ENABLED:-true}"
+      AI_AGENT_PORT: "3200"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY not set}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET not set}"
+      LIVEKIT_HOST: "http://livekit:7880"
+      LIVEKIT_URL: "ws://livekit:7880"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/2"
+      STT_PROVIDER: "${STT_PROVIDER:-whisper}"
+      TTS_PROVIDER: "${TTS_PROVIDER:-piper}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-brain}"
+      FAZLE_BRAIN_URL: "http://fazle-brain:8200"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ELEVENLABS_API_KEY: "${ELEVENLABS_API_KEY:-}"
+      ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID:-}"
+      DISPATCH_TIMEOUT_MS: "5000"
+      MAX_RESPONSE_TIME_SEC: "7"
+      MAX_CONCURRENT_AGENTS: "5"
+      NODE_ENV: "production"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          memory: 64M
+    depends_on:
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3200/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app-network
+      - db-network
+
+networks:
+  app-network:
+    external: true
+  db-network:
+    external: true

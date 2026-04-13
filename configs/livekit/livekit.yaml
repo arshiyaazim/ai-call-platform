@@ -41,6 +41,7 @@ room:
 webhook:
   urls:
     - ${LIVEKIT_WEBHOOK_URL}
+    - ${AI_AGENT_WEBHOOK_URL}
   api_key: ${LIVEKIT_API_KEY}
 
 limit:

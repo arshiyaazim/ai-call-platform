@@ -4,11 +4,15 @@
 # Uses OpenAI Realtime or Whisper STT + TTS pipeline
 # Enhanced with VoiceBrainManager for session management,
 # interrupt handling, chunked speech output, and silence detection
+#
+# Supports both browser-originated (WebRTC) and Twilio/SIP calls.
+# SIP participants are auto-detected and assigned social defaults.
 # ============================================================
 import asyncio
 import json
 import logging
 import os
+import time
 
 import httpx
 from livekit import rtc
@@ -323,9 +327,60 @@ def prewarm(proc: JobProcess):
     logger.info("Prewarmed: VAD + Piper TTS")
 
 
+# ── SIP / Twilio Participant Detection ──────────────────────
+
+def _is_sip_participant(participant) -> bool:
+    """Detect if a participant originated from SIP/Twilio (phone call)."""
+    # LiveKit protocol: kind 3 = SIP
+    if hasattr(participant, "kind") and participant.kind == 3:
+        return True
+    identity = (participant.identity or "").lower()
+    return (
+        identity.startswith("sip_")
+        or identity.startswith("sip:")
+        or identity.startswith("phone_")
+        or identity.startswith("phone:")
+        or bool(
+            identity.startswith("+") and len(identity) > 7 and identity[1:].replace("-", "").isdigit()
+        )
+    )
+
+
+def _extract_phone_from_identity(identity: str) -> str:
+    """Extract phone number from SIP-style identity (e.g., 'sip_+447863767879')."""
+    import re
+    match = re.search(r"\+\d+", identity)
+    return match.group(0) if match else ""
+
+
+def _try_load_redis_context(room_name: str):
+    """Best-effort load call context from Redis (stored by ai-agent-service)."""
+    try:
+        redis_url = settings.redis_url or os.getenv("REDIS_URL", "")
+        if not redis_url:
+            return
+        # Use DB 2 for ai-agent-service context
+        ctx_redis_url = redis_url.rsplit("/", 1)[0] + "/2"
+        import redis as redis_lib
+        r = redis_lib.Redis.from_url(ctx_redis_url, decode_responses=True)
+        raw = r.get(f"voice:ctx:{room_name}")
+        r.close()
+        if raw:
+            ctx = json.loads(raw)
+            logger.info(f"Loaded Redis context for room {room_name}: call_sid={ctx.get('call_sid')}")
+    except Exception as e:
+        logger.debug(f"Redis context load skipped: {e}")
+
+
 async def entrypoint(ctx: JobContext):
     """Main entrypoint for each voice session."""
     logger.info(f"Voice agent joining room: {ctx.room.name}")
+
+    # ── AI_ENABLED check (dispatched by ai-agent-service) ───
+    ai_enabled = os.getenv("AI_ENABLED", "true").lower()
+    if ai_enabled == "false":
+        logger.info(f"AI_ENABLED=false, skipping room: {ctx.room.name}")
+        return
 
     # Extract user context from participant metadata
     # The token endpoint sets: identity=user_id, name=user_name, metadata=relationship
@@ -335,17 +390,34 @@ async def entrypoint(ctx: JobContext):
     user_id = participant.identity or "unknown"
     user_name = participant.name or "User"
 
+    # ── Detect SIP/Twilio participants ──────────────────────
+    is_sip = _is_sip_participant(participant)
+
     # Parse metadata — supports JSON (new) and plain string (legacy)
     raw_metadata = participant.metadata or ""
     try:
         meta = json.loads(raw_metadata)
-        relationship = meta.get("relationship", "self")
+        relationship = meta.get("relationship", "social" if is_sip else "self")
         session_voice_id = meta.get("voice_id", "")
+        call_sid = meta.get("call_sid", "")
     except (json.JSONDecodeError, TypeError, ValueError):
-        relationship = raw_metadata or "self"
+        relationship = raw_metadata if raw_metadata and not is_sip else ("social" if is_sip else "self")
         session_voice_id = ""
+        call_sid = ""
 
-    logger.info(f"Voice session: user={user_name}, relationship={relationship}, id={user_id}, voice_id={session_voice_id or 'none'}")
+    # For SIP participants, extract phone number from identity
+    if is_sip:
+        phone = _extract_phone_from_identity(user_id)
+        if phone:
+            user_name = phone
+        if not call_sid:
+            call_sid = ctx.room.name  # Room name may encode call_sid
+        logger.info(f"SIP/Twilio call detected: phone={phone or user_id}, call_sid={call_sid}")
+
+    # Try to read context from Redis (stored by ai-agent-service)
+    _try_load_redis_context(ctx.room.name)
+
+    logger.info(f"Voice session: user={user_name}, relationship={relationship}, id={user_id}, voice_id={session_voice_id or 'none'}, sip={is_sip}")
 
     # Create a voice brain session for this call
     session = voice_brain.create_session(
@@ -387,6 +459,22 @@ async def entrypoint(ctx: JobContext):
     )
 
     agent.start(ctx.room, participant)
+
+    # Log pipeline latency on speech events
+    _stt_start = [0.0]
+    _llm_start = [0.0]
+
+    @agent.on("user_speech_committed")
+    def on_user_speech(msg):
+        _stt_start[0] = time.monotonic()
+        logger.info(f"[LATENCY] User speech committed: {str(msg)[:80]}")
+
+    @agent.on("agent_speech_committed")
+    def on_agent_speech(msg):
+        if _stt_start[0] > 0:
+            total_ms = int((time.monotonic() - _stt_start[0]) * 1000)
+            logger.info(f"[LATENCY] Full pipeline (STT→LLM→TTS): {total_ms}ms")
+            _stt_start[0] = 0.0
 
     # Natural greeting via voice brain
     greeting = voice_brain.get_greeting(session)
