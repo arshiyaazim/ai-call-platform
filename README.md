@@ -3,8 +3,8 @@
 > AI-powered voice agent platform with an autonomous intelligence layer. Handles real-time phone calls via Twilio SIP and LiveKit WebRTC, backed by a multi-agent AI brain that plans, reasons, learns, and self-improves across every interaction.
 
 **Domain:** `iamazim.com` &nbsp;|&nbsp; **VPS:** Contabo (4 CPUs, 7.8 GB RAM, 73 GB disk, Ubuntu)  
-**Version:** Phase 6 — Ollama-First LLM Gateway &nbsp;|&nbsp; **Containers:** 38  
-**Last updated:** 2026-04-11
+**Version:** Phase 8 — AI Voice Agent Integration &nbsp;|&nbsp; **Containers:** 40  
+**Last updated:** 2026-04-13
 
 ---
 
@@ -17,6 +17,8 @@
   - [Stack 1 — ai-infra (Foundation)](#stack-1--ai-infra-foundation)
   - [Stack 2 — dograh (Voice Platform)](#stack-2--dograh-voice-platform)
   - [Stack 3 — fazle-ai (Intelligence Layer)](#stack-3--fazle-ai-intelligence-layer)
+  - [Stack 4 — telephony-webhook (Twilio Inbound)](#stack-4--telephony-webhook-twilio-inbound)
+  - [Stack 5 — ai-agent-service (Voice Agent Dispatch)](#stack-5--ai-agent-service-voice-agent-dispatch)
 - [Fazle Personal AI System](#fazle-personal-ai-system)
   - [Multi-Agent Brain](#multi-agent-brain)
   - [LLM Gateway](#llm-gateway)
@@ -100,71 +102,81 @@ As of 2026-04-11, the platform runs **Ollama-first** with automatic OpenAI fallb
 ## Architecture
 
 ```
-                          ┌──────────────────────┐
-                          │   Cloudflared Tunnel  │
-                          │   + Nginx (SSL)       │
-                          │   iamazim.com :443    │
-                          └──┬─────┬─────┬────┬──┘
-                             │     │     │    │
-              ┌──────────────┘     │     │    └──────────────┐
-              ▼                    ▼     ▼                   ▼
-       ┌─────────────┐   ┌────────────┐ ┌──────────┐  ┌───────────┐
-       │ Dograh UI   │   │ Dograh API │ │ LiveKit  │  │ Fazle UI  │
-       │ :3010       │   │ :8000      │ │ :7880    │  │ :3020     │
-       └─────────────┘   └─────┬──────┘ └────┬─────┘  └─────┬─────┘
-                               │              │              │
-                        ┌──────▼──────────────▼──────────────▼──────┐
-                        │              Fazle AI Services             │
-                        │                                            │
-                        │  ┌─────────┐  ┌────────┐  ┌────────────┐ │
-                        │  │  Brain  │  │ Memory │  │ LLM Gateway│ │
-                        │  │  :8200  │  │ :8300  │  │   :8800    │ │
-                        │  │(9 agents)  └────┬───┘  └─────┬──────┘ │
-                        │  └────┬────┘       │      Ollama│→OpenAI  │
-                        │       │       ┌────▼───┐  ┌────▼──────┐ │
-                        │  ┌────▼────┐  │Trainer │  │  Queue    │ │
-                        │  │ Tasks   │  │ :8600  │  │  :8810    │ │
-                        │  │ :8400   │  └────────┘  └────┬──────┘ │
-                        │  └─────────┘                   │         │
-                        │                          ┌─────▼───────┐ │
-                        │  ┌──────────┐ ┌────────┐ │  Workers    │ │
-                        │  │  Voice   │ │Learning│ │  :8820 × 2  │ │
-                        │  │  :8700   │ │ :8900  │ └─────────────┘ │
-                        │  └──────────┘ └────────┘                 │
-                        │                                           │
-                        │  ┌──────────┐ ┌──────────┐ ┌──────────┐ │
-                        │  │ Social   │ │Workflow  │ │Guardrail │ │
-                        │  │ :9800    │ │ :9700    │ │ :9600    │ │
-                        │  └──────────┘ └──────────┘ └──────────┘ │
-                        │  ┌──────────────────┐                    │
-                        │  │ Web Intelligence │                    │
-                        │  │     :8500        │                    │
-                        │  └──────────────────┘                    │
-                        │                                           │
-                        │  Autonomous: Autonomy(:9100) Tool(:9200) │
-                        │  KnowledgeGraph(:9300) Runner(:9400)     │
-                        │  SelfLearning(:9500)                     │
-                        └───────────────┬──────────────────────────┘
-                                        │
-              ┌─────────────────────────┼───────────────────────────┐
-              │        Foundation (ai-infra)                        │
-              │                                                     │
-              │  PostgreSQL+pgvector  Redis  Qdrant  MinIO  Ollama │
-              │  :5432               :6379  :6333   :9000  :11434  │
-              │                                                     │
-              │  LiveKit  Coturn  Prometheus  Grafana  Loki        │
-              │  :7880    :3478   :9090       :3030    :3100       │
-              │                                                     │
-              │  OTel Collector  node-exporter  cAdvisor  Promtail │
-              │  :4317-4318      :9100          :8080     :9080    │
-              └─────────────────────────────────────────────────────┘
+                 ┌──────────────────────────────────────────┐
+                 │          Cloudflare DNS / CDN             │
+                 │          iamazim.com → VPS:443            │
+                 └──────────────────┬───────────────────────┘
+                                    │
+                 ┌──────────────────▼───────────────────────┐
+                 │     Nginx (host) — SSL termination       │
+                 │     /etc/nginx/sites-available/*.conf     │
+                 └──┬─────┬─────┬────┬───────┬─────────────┘
+                    │     │     │    │       │
+     ┌──────────────┘     │     │    │       └──────────────────┐
+     ▼                    ▼     ▼    ▼                          ▼
+┌──────────┐   ┌──────────┐ ┌──────┐ ┌──────────┐   ┌──────────────────┐
+│Dograh UI │   │Dograh API│ │Live- │ │ Fazle UI │   │Telephony Webhook │
+│  :3010   │   │  :8000   │ │Kit   │ │  :3020   │   │     :3100        │
+└──────────┘   └────┬─────┘ │:7880 │ └────┬─────┘   └───────┬──────────┘
+                    │        └──┬───┘      │         /telephony/* → :3100
+                    │           │          │         re-injects Twilio headers
+                    │     ┌─────▼───────┐  │         then forwards to ▼
+                    │     │ AI Agent    │  │         dograh-api:8000
+                    │     │ Service     │  │
+                    │     │ :3200       │  │
+                    │     └──────┬──────┘  │
+             ┌──────▼───────────▼──────────▼──────┐
+             │         Fazle AI Services            │  dograh-api:8000
+             │                                      │
+             │  ┌─────────┐  ┌────────┐  ┌────────────┐ │
+             │  │  Brain  │  │ Memory │  │ LLM Gateway│ │
+             │  │  :8200  │  │ :8300  │  │   :8800    │ │
+             │  │(9 agents)  └────┬───┘  └─────┬──────┘ │
+             │  └────┬────┘       │      Ollama│→OpenAI  │
+             │       │       ┌────▼───┐  ┌─────▼──────┐ │
+             │  ┌────▼────┐  │Trainer │  │  Queue     │ │
+             │  │ Tasks   │  │ :8600  │  │  :8810     │ │
+             │  │ :8400   │  └────────┘  └────┬───────┘ │
+             │  └─────────┘                   │         │
+             │                          ┌─────▼───────┐ │
+             │  ┌──────────┐ ┌────────┐ │  Workers    │ │
+             │  │  Voice   │ │Learning│ │  :8820 × 2  │ │
+             │  │  :8700   │ │ :8900  │ └─────────────┘ │
+             │  └──────────┘ └────────┘                 │
+             │                                           │
+             │  ┌──────────┐ ┌──────────┐ ┌──────────┐ │
+             │  │ Social   │ │Workflow  │ │Guardrail │ │
+             │  │ :9800    │ │ :9700    │ │ :9600    │ │
+             │  └──────────┘ └──────────┘ └──────────┘ │
+             │  ┌──────────────────┐                    │
+             │  │ Web Intelligence │                    │
+             │  │     :8500        │                    │
+             │  └──────────────────┘                    │
+             │                                           │
+             │  Autonomous: Autonomy(:9100) Tool(:9200) │
+             │  KnowledgeGraph(:9300) Runner(:9400)     │
+             │  SelfLearning(:9500)                     │
+             └───────────────┬──────────────────────────┘
+                             │
+       ┌─────────────────────┼───────────────────────────┐
+       │        Foundation (ai-infra)                     │
+       │                                                  │
+       │  PostgreSQL+pgvector  Redis  Qdrant  MinIO  Ollama │
+       │  :5432               :6379  :6333   :9000  :11434  │
+       │                                                     │
+       │  Coturn  Prometheus  Grafana  Loki   Cloudflared   │
+       │  :3478   :9090       :3030    :3100  (fallback)    │
+       │                                                     │
+       │  OTel Collector  node-exporter  cAdvisor  Promtail │
+       │  :4317-4318      :9100          :8080     :9080    │
+       └─────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Services
 
-The system deploys as **three Docker Compose stacks** plus a Cloudflare tunnel, totaling **38 containers**.
+The system deploys as **five Docker Compose stacks** plus host-level Nginx, totaling **40 containers**.
 
 ### Stack 1 — ai-infra (Foundation)
 
@@ -229,11 +241,52 @@ All Fazle services — core intelligence, Phase-5 autonomous services, and suppo
 | **Observability** | | |
 | fazle-otel-collector | 4317-4318 | OpenTelemetry collector — distributed tracing |
 
+### Stack 4 — telephony-webhook (Twilio Inbound)
+
+Production-grade Node.js webhook handler that sits between Nginx and Dograh API for inbound Twilio calls. Solves Cloudflare/Nginx header stripping that breaks Twilio provider detection.
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| telephony-webhook | `telephony-webhook` (local build) | 3100 | Twilio webhook receiver — idempotent call logging, retry with dead-letter, header re-injection |
+
+**Key features:**
+- **CallSid idempotency** — atomic INSERT with UNIQUE constraint prevents duplicate processing
+
+- **DB-level processing lock** — `locked_at` column with 30 s stale detection
+- **Retry logic** — up to 3 attempts before marking `permanently_failed`
+- **Header re-injection** — adds `User-Agent: TwilioProxy/1.1`, `ApiVersion=2010-04-01`, and forwards `x-twilio-signature` to Dograh API (fixes provider detection after Cloudflare strips these)
+- **10 s workflow timeout** — prevents hung calls from blocking the pool
+- **Structured JSON logging** — `request_id`, `latency_ms`, `call_sid` on every log line
+- **Metrics endpoint** — `/metrics` with total, duplicate, failed, permanently_failed counters
+- **PostgreSQL event store** — `telephony_events` table with full call payload
+
+### Stack 5 — ai-agent-service (Voice Agent Dispatch)
+
+Lightweight Node.js service that bridges Twilio/SIP inbound calls with the fazle-voice AI agent via LiveKit. Receives LiveKit webhook events, detects SIP participants, stores call context in Redis, and dispatches fazle-voice to the call room.
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| ai-agent-service | `ai-agent-service` (local build) | 3200 | LiveKit webhook receiver — SIP detection, context storage, agent dispatch |
+
+**Key features:**
+- **LiveKit webhook receiver** — validates JWT-signed events from LiveKit server
+- **SIP participant detection** — identifies Twilio-originated callers by `kind=3`, identity patterns (`sip_*`, `phone_*`, `+*`)
+- **Call context storage** — stores caller metadata in Redis DB 2 (`voice:ctx:{room}`) for fazle-voice to consume
+- **Agent dispatch** — uses LiveKit SDK `AgentDispatchClient` with auto-dispatch fallback (fazle-voice registers as a worker and auto-joins rooms)
+- **Provider health checks** — monitors STT (Whisper), TTS (Piper), LLM (Brain) availability
+- **Test simulation endpoint** — `POST /test/simulate` for integration testing without real calls
+- **Metrics endpoint** — `/metrics` with webhook, dispatch, error counters
+
+**Architecture role:**
+```
+Twilio SIP → LiveKit Room → LiveKit Webhook → ai-agent-service → dispatch fazle-voice
+                                                    ↓
+                                              Redis context store
+                                                    ↓
+                                              fazle-voice reads context + joins room
+```
+
 ---
-
-## Fazle Personal AI System
-
-Fazle is a layered intelligence system composed of 22 microservices:
 
 ```
 Layer 1  API Gateway (fazle-api :8100)
@@ -347,19 +400,29 @@ Every LLM request/response is logged with: provider, model, system prompt hash, 
 
 ### How a Call Flows
 
-1. Incoming Twilio SIP call → **Dograh API** receives webhook at `/api/v1/telephony/inbound/{workflow_id}`
-   - Nginx maps `https://iamazim.com/telephony/` → `dograh-api:8000/api/v1/telephony/`
-2. Audio streamed via **LiveKit** WebRTC room (TURN via `turn.iamazim.com`)
-3. Real-time STT transcribes caller speech
-4. **Brain** classifies query complexity → routes to agent pipeline
-5. **MemoryAgent** retrieves relevant context from Qdrant
-6. System prompt built with personality, relationship tone, and knowledge context (truncated to ~800 chars for CPU budget)
-7. **LLM Gateway** generates response: Ollama first (10 s) → OpenAI fallback → logged to DB
-8. Response humanized (AI-isms removed) + confidence check
-9. TTS converts response to audio, streamed back via LiveKit
-10. Conversation stored in Redis (24h TTL) + memory service
-11. **Knowledge Graph** updates entities and relationships (async)
-12. **Self Learning** analyzes the interaction (async)
+1. Incoming Twilio SIP call → **Nginx** receives webhook at `https://iamazim.com/telephony/inbound/1`
+2. Nginx proxies `/telephony/` → **telephony-webhook** (:3100)
+   - Validates CallSid, logs event to `telephony_events` table (idempotent)
+   - Returns TwiML `<Say>Connecting your call</Say>` immediately to Twilio
+   - Asynchronously re-injects stripped headers (`User-Agent: TwilioProxy/1.1`, `ApiVersion`, `x-twilio-signature`)
+   - Forwards to **Dograh API** at `http://dograh-api:8000/api/v1/telephony/inbound/1`
+3. Dograh API detects Twilio provider (Check #3: CallSid + AccountSid + ApiVersion) and validates credentials
+4. Audio streamed via **LiveKit** WebRTC room (TURN via `turn.iamazim.com`)
+5. LiveKit sends `participant_joined` webhook → **ai-agent-service** (:3200)
+   - Detects SIP participant (kind=3 or identity pattern)
+   - Stores call context in Redis DB 2 (`voice:ctx:{room}`)
+   - Dispatches **fazle-voice** agent to the room (SDK `AgentDispatchClient` + auto-dispatch fallback)
+6. **fazle-voice** joins the room, loads Redis context, starts STT pipeline
+7. Real-time STT transcribes caller speech
+8. **Brain** classifies query complexity → routes to agent pipeline
+9. **MemoryAgent** retrieves relevant context from Qdrant
+10. System prompt built with personality, relationship tone, and knowledge context (truncated to ~800 chars for CPU budget)
+11. **LLM Gateway** generates response: Ollama first (10 s) → OpenAI fallback → logged to DB
+12. Response humanized (AI-isms removed) + confidence check
+13. TTS converts response to audio, streamed back via LiveKit
+14. Conversation stored in Redis (24h TTL) + memory service
+15. **Knowledge Graph** updates entities and relationships (async)
+16. **Self Learning** analyzes the interaction (async)
 
 ---
 
@@ -407,9 +470,13 @@ The Fazle UI (Next.js 14, TypeScript, Tailwind CSS) provides a control dashboard
 
 ### Nginx Reverse Proxy (SSL)
 
-| Domain | Backend | Port |
+Nginx runs on the host (not Docker), with configs at `/etc/nginx/sites-available/`.
+
+| Domain / Path | Backend | Port |
 |--------|---------|------|
 | `iamazim.com` | dograh-ui | 3010 |
+| `iamazim.com/api/` | dograh-api | 8000 |
+| `iamazim.com/telephony/` | telephony-webhook | 3100 |
 | `api.iamazim.com` | dograh-api | 8000 |
 | `livekit.iamazim.com` | livekit | 7880 |
 | `fazle.iamazim.com` | fazle-ui / fazle-api | 3020 / 8100 |
@@ -466,6 +533,7 @@ The Fazle UI (Next.js 14, TypeScript, Tailwind CSS) provides a control dashboard
 | `fazle_scheduler_jobs` | Fazle | Scheduled tasks & reminders |
 | `fazle_web_intelligence_cache` | Fazle | Cached web search results & summaries |
 | `llm_conversation_log` | Gateway | Every LLM request/response — provider, model, latency, fallback flag, trainable flag |
+| `telephony_events` | Telephony Webhook | Inbound call log — CallSid (unique), workflow_id, from/to, payload, status, retry_count, locked_at |
 
 ### Vector Storage
 
@@ -531,7 +599,10 @@ cd fazle-ai && docker compose --env-file ../.env up -d && cd ..
 # 8. Start Phase-5 autonomous services
 cd scripts && docker compose -f phase5-standalone.yaml --env-file ../.env up -d && cd ..
 
-# 9. Verify all services
+# 9. Start telephony webhook proxy
+cd telephony-webhook && docker compose --env-file ../.env up -d && cd ..
+
+# 10. Verify all services
 ./scripts/health-check.sh
 ```
 
@@ -736,6 +807,8 @@ Additional configs:
 - `personality/personality.md` — Master personality definition
 - `personality/azim-master-persona.md` — Detailed persona rules, relationship boundaries, content safety
 - `scripts/phase5-standalone.yaml` — Docker Compose for Phase-5 autonomous services (standalone deployment)
+- `telephony-webhook/docker-compose.yaml` — Docker Compose for telephony webhook proxy
+- `telephony-webhook/src/` — Express routes, middleware (Twilio signature validation), DB schema
 - `db/rls/rls_policies.sql` — Row-Level Security policies
 - `db/hardening/` — Database hardening scripts
 
@@ -771,11 +844,11 @@ Additional configs:
 3. Purchase/assign phone number (your number: `+447863767879`)
 4. Dograh auto-configures the webhook to `https://iamazim.com/telephony/inbound/{workflow_id}`
 5. **Verify in Twilio Console** → Phone Numbers → your number → Voice Configuration:
-   - "A Call Comes In" → Webhook → `https://iamazim.com/telephony/inbound/{workflow_id}` (POST)
-   - Replace `{workflow_id}` with your Dograh workflow ID (e.g., `2`)
+   - "A Call Comes In" → Webhook → `https://iamazim.com/telephony/inbound/1` (POST)
+   - Use workflow ID `1` for inbound calls, `2` for outbound
 
 > **Note:** Twilio credentials are stored in the database via the Dograh UI, NOT as environment variables.
-> The nginx location `/telephony/` proxies to `dograh-api /api/v1/telephony/`.
+> The nginx `/telephony/` location proxies to `telephony-webhook:3100`, which re-injects stripped Twilio headers before forwarding to `dograh-api`.
 
 ---
 
@@ -881,17 +954,39 @@ openssl s_client -connect turn.iamazim.com:5349
 
 ### Twilio webhook not working
 ```bash
-# Test webhook returns TwiML:
-curl -s -X POST https://iamazim.com/telephony/inbound/2 -d 'From=+1234567890'
-# Expected: <Response>...</Response> (not 404)
+# Test webhook health (through nginx):
+curl -s https://iamazim.com/telephony/health | python3 -m json.tool
+
+# Test webhook returns TwiML (through nginx):
+curl -s -X POST https://iamazim.com/telephony/inbound/1 \
+  -d 'CallSid=CA_TEST_001' -d 'AccountSid=AC_TEST' \
+  -d 'From=+1234567890' -d 'To=+447863767879' \
+  -d 'CallStatus=ringing' -d 'ApiVersion=2010-04-01'
+# Expected: <Response><Say voice="alice">Connecting your call...</Say></Response>
+
+# Test telephony-webhook directly (on VPS):
+curl -s http://127.0.0.1:3100/health
+
+# Check telephony-webhook logs:
+docker logs telephony-webhook --tail 30
 
 # Check Dograh API directly:
-curl -s -X POST http://127.0.0.1:8000/api/v1/telephony/inbound/2 -d 'From=+1234567890'
+curl -s -X POST http://127.0.0.1:8000/api/v1/telephony/inbound/1 \
+  -H 'User-Agent: TwilioProxy/1.1' \
+  -d 'CallSid=CA_TEST_001' -d 'AccountSid=ACfb69...' \
+  -d 'ApiVersion=2010-04-01' -d 'From=+1234567890'
 
 # Verify credentials stored in DB:
 docker exec ai-postgres psql -U postgres -d postgres -t \
   -c "SELECT key, value FROM organization_configurations WHERE key='TELEPHONY_CONFIGURATION';"
+
+# Check telephony_events table:
+docker exec ai-postgres psql -U postgres -d postgres \
+  -c "SELECT call_sid, status, retry_count, created_at FROM telephony_events ORDER BY id DESC LIMIT 10;"
 ```
+
+> **Workflow IDs:** 1 = inbound, 2 = outbound. Twilio webhook must point to `/telephony/inbound/1`.
+> **Twilio Console:** Phone Numbers → +447863767879 → Voice → "A Call Comes In" → `https://iamazim.com/telephony/inbound/1` (POST)
 
 ### Call quality problems
 - Check API response time: `curl -w "%{time_total}" https://api.iamazim.com/api/v1/health`
@@ -918,7 +1013,12 @@ docker exec ai-postgres psql -U postgres -d postgres -t \
 
 - On 4-CPU VPS, Ollama inference with `qwen2.5:1.5b` averages 5-7 s, often exceeding the 10 s gateway timeout → high fallback rate to OpenAI
 - Brain's parallel fan-out (`query_llm_smart`) causes Ollama contention: two simultaneous requests compete for the single-threaded Ollama instance
-- LiveKit reports "high cpu load" on 4-CPU VPS with 38 containers — consider VPS upgrade (8 vCPU / 16 GB recommended) for production voice calls
+- LiveKit reports "high cpu load" on 4-CPU VPS with 39 containers — consider VPS upgrade (8 vCPU / 16 GB recommended) for production voice calls
+
+### Resolved Issues (Phase 7)
+
+- **Cloudflare/Nginx header stripping** — Twilio headers (`User-Agent`, `x-twilio-signature`, `ApiVersion`) were stripped by Cloudflare and host Nginx, causing Dograh's `can_handle_webhook()` to fail provider detection. **Fixed** by telephony-webhook proxy that re-injects all required headers before forwarding to Dograh API.
+- **Wrong workflow ID in Twilio Console** — Webhook was pointing to `/inbound/2` (outbound workflow) instead of `/inbound/1` (inbound). Corrected.
 
 ---
 
@@ -934,6 +1034,7 @@ docker exec ai-postgres psql -U postgres -d postgres -t \
 | Phase 4 | Database RLS, security hardening, learning system | Deployed |
 | Phase 5 | Autonomous AI — multi-agent brain, autonomy engine, tool engine, knowledge graph, runner, self-learning | Deployed (2026-03-19) |
 | Phase 6 | Ollama-first LLM gateway — caching, fallback, DB logging, training data export | Deployed (2026-04-10) |
+| Phase 7 | Telephony webhook hardening — Nginx-first routing, header re-injection proxy, idempotent event store, retry & dead-letter | Deployed (2026-04-13) |
 
 ### Planned
 
