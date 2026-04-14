@@ -427,6 +427,181 @@ async def _get_last_customer_message(db_conn_fn, platform: str, owner_phone: str
     return None
 
 
+# ── Owner Command System ──────────────────────────────────────
+# Allows owner (Azim) to send instructions via WhatsApp:
+#   - "send message to 01848... about X" → AI generates & sends
+#   - "read last 5 messages" → shows recent conversations
+#   - "reply to last 3 messages" → reads + auto-replies
+
+def _detect_owner_command(text: str) -> dict | None:
+    """Detect if owner message is an executable command.
+    Returns command dict or None if not a command."""
+    txt = text.strip()
+    txt_lower = txt.lower()
+
+    # Skip very short messages (likely approvals or single words)
+    if len(txt) < 10:
+        return None
+
+    # ── READ / SHOW MESSAGES ──
+    read_match = re.search(
+        r'(?:read|show|get|check|see)\s+(?:the\s+)?(?:last|recent|latest)\s+(\d+)\s+messages?',
+        txt_lower,
+    )
+    if not read_match:
+        read_match = re.search(r'শেষ\s+(\d+)\s*(?:টা|টি)?\s*মেসেজ', txt_lower)
+    if read_match:
+        count = min(int(read_match.group(1)), 20)
+        do_reply = bool(re.search(r'(?:and\s+)?repl(?:y|ies)|উত্তর\s*দাও', txt_lower))
+        return {"type": "read_messages", "count": count, "auto_reply": do_reply}
+
+    # ── SEND TO SPECIFIC NUMBER ──
+    # Look for a BD phone number (01XXXXXXXXX format, optionally with +88 prefix)
+    phone_match = re.search(r'(?<!\d)(\+?(?:88)?0?1[3-9]\d{8})(?!\d)', txt)
+    if phone_match:
+        send_kw = re.search(
+            r'send|message|msg|text|wish|joke|greet|tell|remind|write|compose'
+            r'|পাঠাও|পাঠা|মেসেজ|বলো|লেখো|শুভেচ্ছা|জোক',
+            txt_lower,
+        )
+        if send_kw:
+            target_phone = phone_match.group(1)
+            return {
+                "type": "send_to",
+                "target_phone": target_phone,
+                "instruction": txt,
+            }
+
+    return None
+
+
+async def _execute_owner_command(
+    command: dict,
+    brain_url: str,
+    db_conn_fn,
+    get_creds_fn,
+    owner_sender_id: str,
+) -> str:
+    """Execute an owner command and return status message for owner."""
+    cmd_type = command["type"]
+    try:
+        if cmd_type == "read_messages":
+            return await _exec_read_messages(command, db_conn_fn, owner_sender_id)
+        elif cmd_type == "send_to":
+            return await _exec_send_to(command, brain_url, db_conn_fn, get_creds_fn, owner_sender_id)
+    except Exception as e:
+        logger.error(f"Owner command execution failed: {e}")
+        return f"❌ Command failed: {e}"
+    return "❌ Unknown command type"
+
+
+async def _exec_read_messages(command: dict, db_conn_fn, owner_sender_id: str) -> str:
+    """Read recent messages and return formatted summary to owner."""
+    count = command["count"]
+    try:
+        norm_owner = _normalize_phone(owner_sender_id)
+        with db_conn_fn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT contact_identifier, content, created_at, direction
+                       FROM fazle_social_messages
+                       WHERE platform = 'whatsapp'
+                         AND contact_identifier != %s
+                       ORDER BY created_at DESC LIMIT %s""",
+                    (norm_owner, count),
+                )
+                rows = cur.fetchall()
+        if not rows:
+            return "📭 No recent messages found."
+
+        lines = [f"📨 *Last {len(rows)} messages:*\n"]
+        for r in rows:
+            arrow = "⬅️" if r["direction"] == "incoming" else "➡️"
+            ts = r["created_at"].strftime("%d/%m %H:%M") if r.get("created_at") else ""
+            phone = r["contact_identifier"]
+            content = (r["content"] or "")[:200]
+            lines.append(f"{arrow} {phone} ({ts}):\n{content}\n")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Read messages failed: {e}")
+        return f"❌ Failed to read messages: {e}"
+
+
+async def _exec_send_to(
+    command: dict, brain_url: str, db_conn_fn, get_creds_fn, owner_sender_id: str,
+) -> str:
+    """Generate content via brain and send to target phone number."""
+    target_phone = _normalize_phone(command["target_phone"])
+    instruction = command["instruction"]
+
+    # Call brain /chat to generate the message content as Azim
+    compose_context = (
+        "OWNER COMMAND — COMPOSE MESSAGE MODE.\n"
+        f"The owner Azim is asking you to compose a message to send to {command['target_phone']}.\n"
+        "Generate ONLY the message text that will be sent. "
+        "Do NOT include any prefix, acknowledgment, or explanation. "
+        "Write naturally as Azim would — casual, warm, personal. "
+        "Output ONLY the final message text."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{brain_url}/chat",
+                json={
+                    "message": instruction,
+                    "user": "Azim",
+                    "relationship": "self",
+                    "conversation_id": f"owner-compose-{uuid.uuid4().hex[:8]}",
+                    "context": compose_context,
+                },
+            )
+            if resp.status_code == 200:
+                generated = resp.json().get("reply", "").strip()
+            else:
+                return f"❌ Brain failed (status {resp.status_code})"
+    except Exception as e:
+        logger.error(f"Brain compose call failed: {e}")
+        return f"❌ Brain call failed: {e}"
+
+    if not generated:
+        return "❌ Brain returned empty content"
+
+    # Send the generated message to target phone via WhatsApp
+    creds = get_creds_fn("whatsapp")
+    if not creds:
+        return "❌ WhatsApp credentials not configured"
+
+    from whatsapp import send_message
+    result = await send_message(
+        creds.get("whatsapp_api_url", ""),
+        creds.get("access_token", ""),
+        creds.get("phone_number_id", ""),
+        target_phone,
+        generated,
+    )
+
+    if result.get("sent"):
+        # Store outgoing message in DB
+        with db_conn_fn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO fazle_social_messages
+                       (platform, direction, contact_identifier, content, metadata, status)
+                       VALUES ('whatsapp', 'outgoing', %s, %s, %s, 'sent')""",
+                    (target_phone, generated,
+                     psycopg2.extras.Json({
+                         "source": "owner_command",
+                         "instruction": instruction[:500],
+                         "commanded_by": owner_sender_id,
+                     })),
+                )
+            conn.commit()
+        logger.info(f"Owner command: sent message to {target_phone}")
+        return f"✅ Sent to {command['target_phone']}:\n\n{generated[:500]}"
+    else:
+        return f"❌ Send failed: {result.get('error', 'unknown')}"
+
+
 async def _store_owner_training(
     learning_engine_url: str, memory_url: str,
     customer_msg: str, owner_reply: str,
@@ -735,6 +910,27 @@ async def handle_whatsapp_webhook(
 
             # Check for contact update commands: "এই নাম্বারটা client" / "01xxx is client"
             _handle_owner_contact_command(msg["text"], db_conn_fn)
+
+            # ── OWNER COMMAND SYSTEM: send message to X / read messages ──
+            owner_cmd = _detect_owner_command(msg["text"])
+            if owner_cmd:
+                logger.info(f"Owner command detected: {owner_cmd['type']}")
+                cmd_result = await _execute_owner_command(
+                    owner_cmd, brain_url, db_conn_fn, get_creds_fn, msg["sender_id"],
+                )
+                if cmd_result:
+                    creds = get_creds_fn("whatsapp")
+                    if creds:
+                        from whatsapp import send_message
+                        await send_message(
+                            creds.get("whatsapp_api_url", ""),
+                            creds.get("access_token", ""),
+                            creds.get("phone_number_id", ""),
+                            msg["sender_id"],
+                            cmd_result,
+                        )
+                processed += 1
+                continue
 
             # ── PHASE 4: Owner "send" command → approve & send latest AI draft ──
             # Only if there's no ops-core pending action (ops-core confirm takes priority)
