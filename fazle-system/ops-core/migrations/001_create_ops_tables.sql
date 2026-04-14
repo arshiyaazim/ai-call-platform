@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS ops_employees (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_employees_mobile ON ops_employees (mobile);
-CREATE INDEX idx_ops_employees_name ON ops_employees USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_ops_employees_mobile ON ops_employees (mobile);
+CREATE INDEX IF NOT EXISTS idx_ops_employees_name ON ops_employees USING gin (name gin_trgm_ops);
 
 -- ============================================================
 -- 2. PROGRAMS
@@ -36,9 +36,9 @@ CREATE TABLE IF NOT EXISTS ops_programs (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_programs_status ON ops_programs (status);
-CREATE INDEX idx_ops_programs_vessel ON ops_programs USING gin (mother_vessel gin_trgm_ops);
-CREATE INDEX idx_ops_programs_date ON ops_programs (start_date);
+CREATE INDEX IF NOT EXISTS idx_ops_programs_status ON ops_programs (status);
+CREATE INDEX IF NOT EXISTS idx_ops_programs_vessel ON ops_programs USING gin (mother_vessel gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_ops_programs_date ON ops_programs (start_date);
 
 -- ============================================================
 -- 3. PROGRAM HISTORY (append-only snapshots)
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS ops_program_history (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_program_history_pid ON ops_program_history (program_id);
+CREATE INDEX IF NOT EXISTS idx_ops_program_history_pid ON ops_program_history (program_id);
 
 -- ============================================================
 -- 4. PAYMENTS
@@ -67,8 +67,8 @@ CREATE TABLE IF NOT EXISTS ops_payments (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_payments_eid ON ops_payments (employee_id);
-CREATE INDEX idx_ops_payments_date ON ops_payments (created_at);
+CREATE INDEX IF NOT EXISTS idx_ops_payments_eid ON ops_payments (employee_id);
+CREATE INDEX IF NOT EXISTS idx_ops_payments_date ON ops_payments (created_at);
 
 -- ============================================================
 -- 5. ATTENDANCE
@@ -83,8 +83,8 @@ CREATE TABLE IF NOT EXISTS ops_attendance (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_attendance_eid ON ops_attendance (employee_id);
-CREATE INDEX idx_ops_attendance_date ON ops_attendance (date);
+CREATE INDEX IF NOT EXISTS idx_ops_attendance_eid ON ops_attendance (employee_id);
+CREATE INDEX IF NOT EXISTS idx_ops_attendance_date ON ops_attendance (date);
 
 -- ============================================================
 -- 6. NOTES
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS ops_notes (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ops_notes_entity ON ops_notes (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_ops_notes_entity ON ops_notes (entity_type, entity_id);
 
 -- ============================================================
 -- 7. Enable trigram extension (for fuzzy text search)
