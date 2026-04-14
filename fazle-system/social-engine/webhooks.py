@@ -569,25 +569,59 @@ async def handle_whatsapp_webhook(
             if not multimodal_reply:
                 multimodal_reply = "\u09a6\u09c1\u0983\u0996\u09bf\u09a4, \u098f\u0987 \u09ae\u09bf\u09a1\u09bf\u09df\u09be \u098f\u0996\u09a8 \u09aa\u09cd\u09b0\u09b8\u09c7\u09b8 \u0995\u09b0\u09a4\u09c7 \u09aa\u09be\u09b0\u099b\u09bf \u09a8\u09be\u0964 \u098f\u0995\u099f\u09c1 \u09aa\u09b0\u09c7 \u0986\u09ac\u09be\u09b0 \u099a\u09c7\u09b7\u09cd\u099f\u09be \u0995\u09b0\u09c1\u09a8\u0964"
             if multimodal_reply:
-                from whatsapp import send_message
-                result = await send_message(
-                    creds.get("whatsapp_api_url", ""),
-                    creds.get("access_token", ""),
-                    creds.get("phone_number_id", ""),
-                    msg["sender_id"],
-                    multimodal_reply,
-                )
-                with db_conn_fn() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """INSERT INTO fazle_social_messages
-                               (platform, direction, contact_identifier, content, metadata, status)
-                               VALUES ('whatsapp', 'outgoing', %s, %s, %s, %s)""",
-                            (msg["sender_id"], multimodal_reply,
-                             psycopg2.extras.Json({"is_owner_reply": is_owner_msg, "media_type": msg_type}),
-                             "sent" if result.get("sent") else "failed"),
+                if is_owner_msg:
+                    # Owner: send directly
+                    from whatsapp import send_message
+                    result = await send_message(
+                        creds.get("whatsapp_api_url", ""),
+                        creds.get("access_token", ""),
+                        creds.get("phone_number_id", ""),
+                        msg["sender_id"],
+                        multimodal_reply,
+                    )
+                    with db_conn_fn() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """INSERT INTO fazle_social_messages
+                                   (platform, direction, contact_identifier, content, metadata, status)
+                                   VALUES ('whatsapp', 'outgoing', %s, %s, %s, %s)""",
+                                (msg["sender_id"], multimodal_reply,
+                                 psycopg2.extras.Json({"is_owner_reply": True, "media_type": msg_type}),
+                                 "sent" if result.get("sent") else "failed"),
+                            )
+                        conn.commit()
+                else:
+                    # Non-owner: store as draft, notify owner
+                    contact_display = msg.get("sender_name") or msg["sender_id"]
+                    with db_conn_fn() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """INSERT INTO fazle_social_messages
+                                   (platform, direction, contact_identifier, content, metadata, status)
+                                   VALUES ('whatsapp', 'outgoing', %s, %s, %s, 'draft')""",
+                                (msg["sender_id"], multimodal_reply,
+                                 psycopg2.extras.Json({
+                                     "source": "ai_draft",
+                                     "media_type": msg_type,
+                                     "customer_name": contact_display,
+                                     "awaiting_approval": True,
+                                 })),
+                            )
+                        conn.commit()
+                    if owner_phone:
+                        owner_notification = (
+                            f"📩 *{contact_display}* sent [{msg_type}]\n\n"
+                            f"🤖 AI suggests:\n{multimodal_reply[:500]}\n\n"
+                            f"✅ Reply *send* to approve"
                         )
-                    conn.commit()
+                        from whatsapp import send_message
+                        await send_message(
+                            creds.get("whatsapp_api_url", ""),
+                            creds.get("access_token", ""),
+                            creds.get("phone_number_id", ""),
+                            owner_phone,
+                            owner_notification,
+                        )
             processed += 1
             continue
 
@@ -602,6 +636,64 @@ async def handle_whatsapp_webhook(
 
             # Check for contact update commands: "এই নাম্বারটা client" / "01xxx is client"
             _handle_owner_contact_command(msg["text"], db_conn_fn)
+
+            # ── PHASE 4: Owner "send" command → approve & send latest AI draft ──
+            # Only if there's no ops-core pending action (ops-core confirm takes priority)
+            msg_lower = msg["text"].strip().lower()
+            if msg_lower in ("send", "approve", "পাঠাও"):
+                try:
+                    with db_conn_fn() as conn:
+                        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                            cur.execute(
+                                """SELECT id, contact_identifier, content, metadata FROM fazle_social_messages
+                                   WHERE platform = 'whatsapp' AND direction = 'outgoing'
+                                     AND status = 'draft' AND metadata->>'awaiting_approval' = 'true'
+                                   ORDER BY created_at DESC LIMIT 1"""
+                            )
+                            draft = cur.fetchone()
+                    if draft:
+                        creds = get_creds_fn("whatsapp")
+                        if creds:
+                            from whatsapp import send_message
+                            result = await send_message(
+                                creds.get("whatsapp_api_url", ""),
+                                creds.get("access_token", ""),
+                                creds.get("phone_number_id", ""),
+                                draft["contact_identifier"],
+                                draft["content"],
+                            )
+                            with db_conn_fn() as conn:
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        "UPDATE fazle_social_messages SET status = %s WHERE id = %s",
+                                        ("sent" if result.get("sent") else "failed", draft["id"]),
+                                    )
+                                conn.commit()
+                            cust_name = (draft.get("metadata") or {}).get("customer_name", draft["contact_identifier"])
+                            # Confirm to owner
+                            await send_message(
+                                creds.get("whatsapp_api_url", ""),
+                                creds.get("access_token", ""),
+                                creds.get("phone_number_id", ""),
+                                msg["sender_id"],
+                                f"✅ Reply sent to {cust_name}",
+                            )
+                            logger.info(f"Owner approved draft → sent to {draft['contact_identifier']}")
+                    else:
+                        creds = get_creds_fn("whatsapp")
+                        if creds:
+                            from whatsapp import send_message
+                            await send_message(
+                                creds.get("whatsapp_api_url", ""),
+                                creds.get("access_token", ""),
+                                creds.get("phone_number_id", ""),
+                                msg["sender_id"],
+                                "No pending draft to send.",
+                            )
+                except Exception as e:
+                    logger.warning(f"Draft approval failed: {e}")
+                processed += 1
+                continue
 
             # ── Owner Feedback Detection (Step 6) ──
             # Check if owner is correcting/rating the last AI reply
@@ -758,7 +850,7 @@ async def handle_whatsapp_webhook(
             contact_relation = (contact_data.get("relation") or "unknown").lower()
             is_priority = contact_relation in ("vip", "client")
 
-        # ── FIX 1+10: NO ACK before brain — get AI reply FIRST, send ONCE ──
+        # ── PHASE 4 FIX: AI generates reply only — NEVER auto-send ──
         # Step 1: Check reply reuse cache BEFORE calling LLM
         cached_reply = None
         if not is_priority:
@@ -766,75 +858,45 @@ async def handle_whatsapp_webhook(
                 from main import find_cached_reply
                 cached_reply = find_cached_reply(db_conn_fn, msg["text"], "whatsapp")
                 if cached_reply:
-                    logger.info(f"Reply reuse hit for {msg['sender_id']} — skipping LLM")
+                    logger.info(f"Reply reuse hit for {msg['sender_id']} — using cached")
             except Exception as e:
                 logger.debug(f"Reply cache check failed: {e}")
 
-        if cached_reply:
-            # Send cached reply directly — no ACK, no LLM
-            creds = get_creds_fn("whatsapp")
-            if creds:
-                from whatsapp import send_message
-                result = await send_message(
-                    creds.get("whatsapp_api_url", ""),
-                    creds.get("access_token", ""),
-                    creds.get("phone_number_id", ""),
-                    msg["sender_id"],
-                    cached_reply,
-                )
-                with db_conn_fn() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """INSERT INTO fazle_social_messages
-                               (platform, direction, contact_identifier, content, metadata, status)
-                               VALUES ('whatsapp', 'outgoing', %s, %s, %s, %s)""",
-                            (msg["sender_id"], cached_reply,
-                             psycopg2.extras.Json({"source": "reply_cache"}),
-                             "sent" if result.get("sent") else "failed"),
-                        )
-                    conn.commit()
-            try:
-                _auto_update_interest(db_conn_fn, msg["sender_id"], "whatsapp", msg["text"])
-            except Exception:
-                pass
-            processed += 1
-            continue
+        ai_reply = cached_reply
 
-        # Step 2: Call brain for AI response — NO ACK sent yet
-        # Rate-limit: skip if we're already processing a reply for this sender
-        if _is_sender_locked(msg["sender_id"]):
-            logger.info(f"Rate-limit: sender {msg['sender_id']} still in cooldown — skipping")
-            processed += 1
-            continue
-        _lock_sender(msg["sender_id"])
+        if not ai_reply:
+            # Step 2: Call brain for AI response — NO send
+            if _is_sender_locked(msg["sender_id"]):
+                logger.info(f"Rate-limit: sender {msg['sender_id']} still in cooldown — skipping")
+                processed += 1
+                continue
+            _lock_sender(msg["sender_id"])
 
-        brain_context = ""
-        if contact_data:
-            brain_context += f"Contact: {contact_data.get('name', '')} ({contact_relation})"
-            if contact_data.get("company"):
-                brain_context += f" from {contact_data['company']}"
-            if contact_data.get("personality_hint"):
-                brain_context += f". Hint: {contact_data['personality_hint']}"
-            brain_context += "\n"
+            brain_context = ""
+            if contact_data:
+                brain_context += f"Contact: {contact_data.get('name', '')} ({contact_relation})"
+                if contact_data.get("company"):
+                    brain_context += f" from {contact_data['company']}"
+                if contact_data.get("personality_hint"):
+                    brain_context += f". Hint: {contact_data['personality_hint']}"
+                brain_context += "\n"
 
-        ai_reply = await _call_brain(
-            brain_url, msg["text"], "whatsapp", msg["sender_name"],
-            sender_id=msg["sender_id"], ack_sent=False,
-            context=brain_context if brain_context else "",
-        )
-        _unlock_sender(msg["sender_id"])
-
-        # FIX 1: Fallback ONLY if brain returned nothing
-        if not ai_reply or not ai_reply.strip():
-            ai_reply = "দুঃখিত, একটু সমস্যা হয়েছে। আবার বলবেন?"
-            logger.warning(f"Brain returned empty for {msg['sender_id']} — using fallback")
-            push_to_dlq(
-                {"sender_id": msg["sender_id"], "text": msg["text"], "message_id": msg_id},
-                "brain_returned_empty",
-                platform="whatsapp",
+            ai_reply = await _call_brain(
+                brain_url, msg["text"], "whatsapp", msg["sender_name"],
+                sender_id=msg["sender_id"], ack_sent=False,
+                context=brain_context if brain_context else "",
             )
+            _unlock_sender(msg["sender_id"])
 
-        # Step 3: Send the SINGLE AI reply (no ACK before it)
+            if not ai_reply or not ai_reply.strip():
+                ai_reply = "দুঃখিত, একটু সমস্যা হয়েছে। আবার বলবেন?"
+                logger.warning(f"Brain returned empty for {msg['sender_id']} — using fallback")
+                push_to_dlq(
+                    {"sender_id": msg["sender_id"], "text": msg["text"], "message_id": msg_id},
+                    "brain_returned_empty",
+                    platform="whatsapp",
+                )
+
         # Save reply for future reuse
         try:
             from main import save_chat_reply
@@ -844,25 +906,45 @@ async def handle_whatsapp_webhook(
         except Exception as e:
             logger.debug(f"Reply cache save failed: {e}")
 
-        creds = get_creds_fn("whatsapp")
-        if creds:
-            from whatsapp import send_message
-            result = await send_message(
-                creds.get("whatsapp_api_url", ""),
-                creds.get("access_token", ""),
-                creds.get("phone_number_id", ""),
-                msg["sender_id"],
-                ai_reply,
+        # Step 3: Store as DRAFT — do NOT send automatically
+        # Notify the owner for confirmation instead
+        contact_display = msg.get("sender_name") or msg["sender_id"]
+        with db_conn_fn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO fazle_social_messages
+                       (platform, direction, contact_identifier, content, metadata, status)
+                       VALUES ('whatsapp', 'outgoing', %s, %s, %s, 'draft')""",
+                    (msg["sender_id"], ai_reply,
+                     psycopg2.extras.Json({
+                         "source": "ai_draft",
+                         "customer_message": msg["text"][:500],
+                         "customer_name": contact_display,
+                         "awaiting_approval": True,
+                     })),
+                )
+            conn.commit()
+
+        # Notify owner about the pending draft
+        if owner_phone:
+            owner_notification = (
+                f"📩 *{contact_display}* ({msg['sender_id']}):\n"
+                f"{msg['text'][:300]}\n\n"
+                f"🤖 AI suggests:\n{ai_reply[:500]}\n\n"
+                f"✅ Reply *send* to approve\n"
+                f"✏️ Or type your own reply"
             )
-            with db_conn_fn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO fazle_social_messages
-                           (platform, direction, contact_identifier, content, status)
-                           VALUES ('whatsapp', 'outgoing', %s, %s, %s)""",
-                        (msg["sender_id"], ai_reply, "sent" if result.get("sent") else "failed"),
-                    )
-                conn.commit()
+            creds = get_creds_fn("whatsapp")
+            if creds:
+                from whatsapp import send_message
+                await send_message(
+                    creds.get("whatsapp_api_url", ""),
+                    creds.get("access_token", ""),
+                    creds.get("phone_number_id", ""),
+                    owner_phone,
+                    owner_notification,
+                )
+                logger.info(f"Draft notification sent to owner for {msg['sender_id']}")
 
         try:
             _auto_update_interest(db_conn_fn, msg["sender_id"], "whatsapp", msg["text"])

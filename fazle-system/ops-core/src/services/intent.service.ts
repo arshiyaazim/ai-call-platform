@@ -49,7 +49,7 @@ const NOTE_KW_RE = /\b(?:note|memo|remark|comment)\b/i;
 const SEARCH_KW_RE = /\b(?:search|find|check|show|list|details|info|আছে|দেখাও|খুঁজে)\b/i;
 const CONFIRM_RE = /^(ok|yes|save|হ্যাঁ|ঠিক আছে|সেভ|confirm)\s*$/i;
 const CANCEL_RE = /^(no|cancel|না|বাদ)\s*$/i;
-const COMPLETION_RE = /\b(completed|done|finish|finished|শেষ|সম্পন্ন|complete)\b/i;
+const COMPLETION_RE = /\b(completed|done|finish|finished|release|released|শেষ|সম্পন্ন|complete|ছাড়)\b/i;
 
 export function detectIntent(text: string): Intent {
   const trimmed = text.trim();
