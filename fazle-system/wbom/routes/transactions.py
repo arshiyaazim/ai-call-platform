@@ -49,7 +49,7 @@ def list_transactions(
     if transaction_date:
         filters["transaction_date"] = str(transaction_date)
     return list_rows(
-        "wbom_cash_transactions", filters, "transaction_date DESC, created_at DESC", limit, offset
+        "wbom_cash_transactions", filters, "transaction_date DESC, transaction_time DESC", limit, offset
     )
 
 
@@ -72,8 +72,8 @@ def daily_summary(day: date):
     return {"date": str(day), "breakdown": rows, "total_income": income, "total_expense": expense, "net": income - expense}
 
 
-@router.get("/by-contact/{contact_id}", response_model=list[TransactionResponse])
-def transactions_by_contact(contact_id: int, limit: int = Query(50, le=200)):
+@router.get("/by-employee/{employee_id}", response_model=list[TransactionResponse])
+def transactions_by_employee(employee_id: int, limit: int = Query(50, le=200)):
     return list_rows(
-        "wbom_cash_transactions", {"contact_id": contact_id}, "transaction_date DESC", limit, 0
+        "wbom_cash_transactions", {"employee_id": employee_id}, "transaction_date DESC", limit, 0
     )

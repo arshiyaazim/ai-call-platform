@@ -786,9 +786,9 @@ function TransactionsTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'e
                   <div>
                     <Label>Notes</Label>
                     <Input
-                      value={editing?.notes || ''}
+                      value={editing?.remarks || ''}
                       onChange={(e) =>
-                        setEditing((p) => ({ ...p, notes: e.target.value }))
+                        setEditing((p) => ({ ...p, remarks: e.target.value }))
                       }
                       placeholder="Optional notes"
                     />
@@ -866,7 +866,7 @@ function TransactionsTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'e
                       {tx.transaction_date ? new Date(tx.transaction_date).toLocaleDateString() : '—'}
                     </td>
                     <td className="p-4 text-sm text-muted-foreground max-w-[200px] truncate">
-                      {tx.notes || '—'}
+                      {tx.remarks || '—'}
                     </td>
                     <td className="p-4 text-sm text-right">
                       <Button

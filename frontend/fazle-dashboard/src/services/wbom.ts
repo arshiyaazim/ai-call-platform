@@ -50,8 +50,10 @@ export interface WbomTransaction {
   payment_method: string;
   transaction_type: string;
   transaction_date: string;
-  notes?: string;
-  created_at: string;
+  transaction_time?: string;
+  status?: string;
+  reference_number?: string;
+  remarks?: string;
   // joined
   employee_name?: string;
 }
