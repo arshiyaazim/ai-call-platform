@@ -31,6 +31,9 @@ def get_conn():
     conn = pool.getconn()
     try:
         yield conn
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         pool.putconn(conn)
 
@@ -52,6 +55,22 @@ def ensure_wbom_tables():
         conn.commit()
     logger.info("WBOM tables ensured")
 
+    # Run incremental migrations (idempotent — safe to re-run)
+    for mig in ("012_wbom_dedup_and_atomic.sql",):
+        mig_path = f"/app/migrations/{mig}"
+        try:
+            with open(mig_path) as f:
+                mig_sql = f.read()
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(mig_sql)
+                conn.commit()
+            logger.info("Applied migration %s", mig)
+        except FileNotFoundError:
+            logger.debug("Migration %s not found, skipping", mig)
+        except Exception as e:
+            logger.warning("Migration %s failed (may already be applied): %s", mig, e)
+
 
 # ── Generic CRUD helpers ─────────────────────────────────────
 
@@ -66,6 +85,55 @@ def insert_row(table: str, data: dict) -> dict:
             row = cur.fetchone()
         conn.commit()
     return dict(row)
+
+
+def insert_row_dedup(table: str, data: dict, conflict_cols: list[str]) -> tuple[dict, bool]:
+    """Insert a row; on conflict (duplicate) return existing row instead.
+
+    Returns (row_dict, is_new). is_new=False means duplicate was detected.
+    """
+    cols = list(data.keys())
+    placeholders = ["%s"] * len(cols)
+    conflict = ", ".join(conflict_cols)
+    sql = (
+        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)}) "
+        f"ON CONFLICT ({conflict}) DO NOTHING RETURNING *"
+    )
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, list(data.values()))
+            row = cur.fetchone()
+        conn.commit()
+    if row:
+        return dict(row), True
+    # Duplicate — fetch existing
+    where = " AND ".join(f"{c} = %s" for c in conflict_cols)
+    vals = [data[c] for c in conflict_cols]
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(f"SELECT * FROM {table} WHERE {where} LIMIT 1", vals)
+            row = cur.fetchone()
+    return dict(row) if row else ({}, False), False
+
+
+@contextmanager
+def atomic(conn):
+    """Run multiple operations in a single DB transaction.
+
+    Usage:
+        with get_conn() as conn:
+            with atomic(conn):
+                cur = conn.cursor(...)
+                cur.execute(...)
+                cur.execute(...)
+    Commits on success, rolls back on exception.
+    """
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_row(table: str, pk_col: str, pk_val) -> Optional[dict]:

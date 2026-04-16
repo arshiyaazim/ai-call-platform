@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     # Owner detection — messages from this phone/id skip AI and train the model
     owner_phone: str = ""  # SOCIAL_OWNER_PHONE — owner's WhatsApp phone number
     learning_engine_url: str = "http://fazle-learning-engine:8900"
+    wbom_url: str = "http://fazle-wbom:9900"  # SOCIAL_WBOM_URL — WBOM service for business ops
 
     class Config:
         env_prefix = "SOCIAL_"
@@ -879,6 +880,7 @@ async def whatsapp_webhook_receive(request: Request):
             result = await handle_whatsapp_webhook(
                 payload, _get_conn, settings.brain_url, _get_integration_creds,
                 owner_phone=settings.owner_phone, learning_engine_url=settings.learning_engine_url,
+                wbom_url=settings.wbom_url,
             )
             await trigger_workflow(settings.workflow_engine_url, "whatsapp.message.received", result)
         except Exception as exc:

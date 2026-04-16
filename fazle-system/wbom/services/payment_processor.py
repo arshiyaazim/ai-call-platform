@@ -11,7 +11,7 @@ from typing import Optional
 
 from database import (
     get_conn, get_row, insert_row, update_row, update_row_no_ts,
-    list_rows, search_rows, execute_query, find_row_exact,
+    list_rows, search_rows, execute_query, find_row_exact, atomic,
 )
 import psycopg2.extras
 
@@ -117,10 +117,7 @@ class PaymentProcessor:
                 transaction_type=transaction_type,
                 message_id=message_id,
             )
-
-            # Step 4: Complete associated program if this is a salary/completion payment
-            if transaction_type in ("Salary", "Advance"):
-                self._try_complete_program(employee["employee_id"])
+            # NOTE: Program completion is now handled atomically inside record_cash_transaction
 
         # Build missing/rejected fields list
         missing = []
@@ -206,9 +203,10 @@ class PaymentProcessor:
         program_id: Optional[int] = None,
         message_id: Optional[int] = None,
     ) -> dict:
-        """Step 3: Record a cash transaction.
+        """Step 3: Record a cash transaction + complete program ATOMICALLY.
 
-        Preserves leading zeros for payment_mobile.
+        Uses a single DB connection + transaction so both succeed or both roll back.
+        Duplicate transactions (same employee, date, amount, type, method) are rejected.
         """
         tx_data = {
             "employee_id": employee_id,
@@ -225,16 +223,71 @@ class PaymentProcessor:
         if message_id:
             tx_data["whatsapp_message_id"] = str(message_id)
 
-        transaction = insert_row("wbom_cash_transactions", tx_data)
-        logger.info(
-            "Recorded %s transaction #%s: %s %s for employee %s",
-            transaction_type, transaction["transaction_id"],
-            amount, payment_method, employee_id,
+        cols = list(tx_data.keys())
+        placeholders = ["%s"] * len(cols)
+        insert_sql = (
+            f"INSERT INTO wbom_cash_transactions ({', '.join(cols)}) "
+            f"VALUES ({', '.join(placeholders)}) "
+            f"ON CONFLICT (employee_id, transaction_date, amount, transaction_type, payment_method) "
+            f"WHERE status = 'Completed' DO NOTHING RETURNING *"
         )
+
+        with get_conn() as conn:
+            with atomic(conn):
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+                # 1) Insert transaction (dedup via partial unique index)
+                cur.execute(insert_sql, list(tx_data.values()))
+                row = cur.fetchone()
+
+                if not row:
+                    # Duplicate detected — fetch existing and return without completing program
+                    logger.warning(
+                        "Duplicate transaction blocked: employee=%s amount=%s type=%s date=%s",
+                        employee_id, amount, transaction_type, tx_data["transaction_date"],
+                    )
+                    cur.execute(
+                        "SELECT * FROM wbom_cash_transactions "
+                        "WHERE employee_id = %s AND transaction_date = %s AND amount = %s "
+                        "AND transaction_type = %s AND payment_method = %s AND status = 'Completed' LIMIT 1",
+                        (employee_id, tx_data["transaction_date"], amount, transaction_type, payment_method),
+                    )
+                    existing = cur.fetchone()
+                    return dict(existing) if existing else tx_data
+
+                transaction = dict(row)
+                logger.info(
+                    "Recorded %s transaction #%s: %s %s for employee %s",
+                    transaction_type, transaction["transaction_id"],
+                    amount, payment_method, employee_id,
+                )
+
+                # 2) Complete program in SAME transaction (atomic)
+                if transaction_type in ("Salary", "Advance"):
+                    cur.execute(
+                        "SELECT program_id FROM wbom_escort_programs "
+                        "WHERE escort_employee_id = %s AND status = 'Running' "
+                        "ORDER BY program_date DESC LIMIT 1",
+                        (employee_id,),
+                    )
+                    prog = cur.fetchone()
+                    if prog:
+                        cur.execute(
+                            "UPDATE wbom_escort_programs SET status = 'Completed', "
+                            "completion_time = NOW(), updated_at = NOW() "
+                            "WHERE program_id = %s",
+                            (prog["program_id"],),
+                        )
+                        logger.info("Completed program %s for employee %s",
+                                     prog["program_id"], employee_id)
+
         return transaction
 
     def _try_complete_program(self, employee_id: int):
-        """Step 4: Complete any Running programs for this employee."""
+        """Step 4: Complete any Running programs for this employee.
+        NOTE: For payment flow, this is now handled atomically inside record_cash_transaction.
+        This method is kept for backward compatibility with other callers.
+        """
         running = list_rows(
             "wbom_escort_programs",
             {"escort_employee_id": employee_id, "status": "Running"},

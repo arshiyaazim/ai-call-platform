@@ -896,6 +896,7 @@ services:
       SOCIAL_VERIFY_TOKEN: "${SOCIAL_VERIFY_TOKEN:-}"
       SOCIAL_META_APP_SECRET: "${SOCIAL_META_APP_SECRET:-}"
       SOCIAL_WORKFLOW_ENGINE_URL: "http://fazle-workflow-engine:9700"
+      SOCIAL_WBOM_URL: "http://fazle-wbom:9900"
       SOCIAL_OWNER_PHONE: "${SOCIAL_OWNER_PHONE:-}"
       SOCIAL_LEARNING_ENGINE_URL: "http://fazle-learning-engine:8900"
     logging:

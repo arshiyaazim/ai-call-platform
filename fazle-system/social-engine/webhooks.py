@@ -650,9 +650,10 @@ async def _store_owner_training(
 async def handle_whatsapp_webhook(
     payload: dict, db_conn_fn, brain_url: str, get_creds_fn,
     owner_phone: str = "", learning_engine_url: str = "",
+    wbom_url: str = "",
 ) -> dict:
     """Process an incoming WhatsApp webhook event.
-    Flow: parse message → store → owner detection → call Brain OR store training."""
+    Flow: parse message → store → forward to WBOM → owner detection → call Brain OR store training."""
     messages = parse_incoming_message(payload)
     processed = 0
 
@@ -697,6 +698,22 @@ async def handle_whatsapp_webhook(
                     (msg["sender_name"] or msg["sender_id"], msg["sender_id"]),
                 )
             conn.commit()
+
+        # ── Forward to WBOM for business operations processing (fire-and-forget) ──
+        if wbom_url and has_text and not is_owner_msg:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(
+                        f"{wbom_url}/api/subagent/wbom/process-message",
+                        json={
+                            "sender_number": msg["sender_id"],
+                            "message_body": msg["text"],
+                            "whatsapp_msg_id": msg_id or "",
+                        },
+                    )
+                logger.info("Forwarded message to WBOM from %s", msg["sender_id"])
+            except Exception as e:
+                logger.warning("WBOM forwarding failed (non-critical): %s", e)
 
         # ──────────── MEDIA MESSAGE (image/audio/video/document) ────────────
         if has_media and msg_type in ("image", "audio", "video", "document"):
