@@ -56,20 +56,20 @@ def ensure_wbom_tables():
     logger.info("WBOM tables ensured")
 
     # Run incremental migrations (idempotent — safe to re-run)
-    for mig in ("012_wbom_dedup_and_atomic.sql",):
-        mig_path = f"/app/migrations/{mig}"
+    _DEDUP_INDEX_SQL = """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wbom_transactions_dedup
+        ON wbom_cash_transactions (employee_id, transaction_date, amount, transaction_type, payment_method)
+        WHERE status = 'Completed';
+    """
+    for label, mig_sql in (("012_dedup_index", _DEDUP_INDEX_SQL),):
         try:
-            with open(mig_path) as f:
-                mig_sql = f.read()
             with get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(mig_sql)
                 conn.commit()
-            logger.info("Applied migration %s", mig)
-        except FileNotFoundError:
-            logger.debug("Migration %s not found, skipping", mig)
+            logger.info("Applied migration %s", label)
         except Exception as e:
-            logger.warning("Migration %s failed (may already be applied): %s", mig, e)
+            logger.warning("Migration %s failed (may already be applied): %s", label, e)
 
 
 # ── Generic CRUD helpers ─────────────────────────────────────
