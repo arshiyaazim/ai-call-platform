@@ -945,7 +945,6 @@ services:
       WBOM_BRAIN_URL: "http://fazle-brain:8200"
       WBOM_REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379/8"
       WBOM_INTERNAL_KEY: "${WBOM_INTERNAL_KEY:-}"
-      WBOM_INTERNAL_KEY: "${WBOM_INTERNAL_KEY:-}"
     logging:
       driver: "json-file"
       options:
