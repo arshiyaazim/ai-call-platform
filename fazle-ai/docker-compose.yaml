@@ -43,6 +43,7 @@ services:
       FAZLE_GUARDRAIL_URL: "http://fazle-guardrail-engine:9600"
       FAZLE_WORKFLOW_ENGINE_URL: "http://fazle-workflow-engine:9700"
       FAZLE_SOCIAL_ENGINE_URL: "http://fazle-social-engine:9800"
+      FAZLE_WBOM_URL: "http://fazle-wbom:9900"
       FAZLE_REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD not set}@redis:6379/7"
       FAZLE_RATE_LIMIT_RPM: "${FAZLE_RATE_LIMIT_RPM:-120}"
       FAZLE_RATE_LIMIT_PER_IP_RPS: "${FAZLE_RATE_LIMIT_PER_IP_RPS:-10}"

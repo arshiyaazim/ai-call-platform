@@ -46,6 +46,7 @@ from governance_routes import router as governance_router, ensure_governance_tab
 from owner_query_routes import router as owner_query_router
 from user_rules_routes import router as user_rules_router, ensure_user_rules_tables
 from maintenance_routes import router as maintenance_router
+from wbom_routes import router as wbom_router
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin, get_optional_user,
@@ -93,6 +94,7 @@ class Settings(BaseSettings):
     guardrail_url: str = "http://fazle-guardrail-engine:9600"
     workflow_engine_url: str = "http://fazle-workflow-engine:9700"
     social_engine_url: str = "http://fazle-social-engine:9800"
+    wbom_url: str = "http://fazle-wbom:9900"
     redis_url: str = "redis://redis:6379/7"
     rate_limit_rpm: int = 120
     rate_limit_per_ip_rps: int = 10
@@ -200,6 +202,7 @@ app.include_router(governance_router)
 app.include_router(owner_query_router)
 app.include_router(user_rules_router)
 app.include_router(maintenance_router)
+app.include_router(wbom_router)
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
