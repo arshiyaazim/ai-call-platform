@@ -253,7 +253,7 @@ Respond in JSON with these fields:
 
 
 # ── LLM Gateway Constants ────────────────────────────────────
-_LLM_TIMEOUT_GATEWAY = 20.0    # Gateway: 20s
+_LLM_TIMEOUT_GATEWAY = 35.0    # Gateway: 35s (must exceed Ollama 30s timeout)
 
 _FALLBACK_REPLY_BN = "দুঃখিত, একটু সমস্যা হয়েছে। আবার বলবেন?"
 _FALLBACK_REPLY_EN = "Sorry, having a small issue. Please try again shortly."
