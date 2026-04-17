@@ -25,6 +25,9 @@ from routes.templates import router as templates_router
 from routes.search import router as search_router
 from routes.subagent import router as subagent_router
 from routes.reports import router as reports_router
+from routes.attendance import router as attendance_router
+from routes.admin import router as admin_router
+from routes.self_service import router as self_service_router
 
 # ---- logging ------------------------------------------------
 from structured_log import setup_structured_logging
@@ -111,6 +114,9 @@ app.include_router(templates_router, prefix="/api/wbom")
 app.include_router(search_router, prefix="/api/wbom")
 app.include_router(subagent_router, prefix="/api")
 app.include_router(reports_router, prefix="/api/wbom")
+app.include_router(attendance_router, prefix="/api/wbom")
+app.include_router(admin_router, prefix="/api/wbom")
+app.include_router(self_service_router, prefix="/api/wbom")
 
 
 # ---- health --------------------------------------------------

@@ -51,6 +51,10 @@ class EmployeeCreate(BaseModel):
     bank_account: Optional[str] = Field(None, max_length=50)
     emergency_contact: Optional[str] = Field(None, max_length=20)
     address: Optional[str] = None
+    bkash_number: Optional[str] = Field(None, max_length=20)
+    nagad_number: Optional[str] = Field(None, max_length=20)
+    basic_salary: Optional[Decimal] = Field(default=Decimal("0"))
+    nid_number: Optional[str] = Field(None, max_length=20)
 
 
 class EmployeeUpdate(BaseModel):
@@ -60,6 +64,10 @@ class EmployeeUpdate(BaseModel):
     bank_account: Optional[str] = Field(None, max_length=50)
     emergency_contact: Optional[str] = Field(None, max_length=20)
     address: Optional[str] = None
+    bkash_number: Optional[str] = Field(None, max_length=20)
+    nagad_number: Optional[str] = Field(None, max_length=20)
+    basic_salary: Optional[Decimal] = None
+    nid_number: Optional[str] = Field(None, max_length=20)
 
 
 class EmployeeResponse(BaseModel):
@@ -72,6 +80,10 @@ class EmployeeResponse(BaseModel):
     bank_account: Optional[str] = None
     emergency_contact: Optional[str] = None
     address: Optional[str] = None
+    bkash_number: Optional[str] = None
+    nagad_number: Optional[str] = None
+    basic_salary: Optional[Decimal] = Decimal("0")
+    nid_number: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -90,6 +102,13 @@ class ProgramCreate(BaseModel):
     contact_id: Optional[int] = None
     whatsapp_message_id: Optional[str] = None
     remarks: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    end_shift: Optional[str] = Field(None, pattern=r"^[DN]$")
+    release_point: Optional[str] = Field(None, max_length=100)
+    day_count: Optional[int] = 0
+    conveyance: Optional[Decimal] = Decimal("0")
+    capacity: Optional[str] = Field(None, max_length=20)
 
 
 class ProgramUpdate(BaseModel):
@@ -99,6 +118,13 @@ class ProgramUpdate(BaseModel):
     destination: Optional[str] = Field(None, max_length=100)
     reply_message_id: Optional[str] = None
     remarks: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    end_shift: Optional[str] = Field(None, pattern=r"^[DN]$")
+    release_point: Optional[str] = Field(None, max_length=100)
+    day_count: Optional[int] = None
+    conveyance: Optional[Decimal] = None
+    capacity: Optional[str] = Field(None, max_length=20)
 
 
 class ProgramResponse(BaseModel):
@@ -118,6 +144,13 @@ class ProgramResponse(BaseModel):
     whatsapp_message_id: Optional[str] = None
     reply_message_id: Optional[str] = None
     remarks: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    end_shift: Optional[str] = None
+    release_point: Optional[str] = None
+    day_count: Optional[int] = 0
+    conveyance: Optional[Decimal] = Decimal("0")
+    capacity: Optional[str] = None
 
 
 # ── Cash Transactions ─────────────────────────────────────────
@@ -527,3 +560,104 @@ class MultiLighterSaveRequest(BaseModel):
     contact_id: Optional[int] = None
     multi_data: dict
     admin_overrides: Optional[list[dict]] = None
+
+
+# ── Attendance ────────────────────────────────────────────────
+
+class AttendanceCreate(BaseModel):
+    employee_id: int
+    attendance_date: date
+    status: str = Field(default="Present", pattern=r"^(Present|Absent|Leave|Half-day)$")
+    location: Optional[str] = Field(None, max_length=100)
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
+    remarks: Optional[str] = None
+    recorded_by: Optional[str] = Field(None, max_length=50)
+
+
+class AttendanceUpdate(BaseModel):
+    status: Optional[str] = Field(None, pattern=r"^(Present|Absent|Leave|Half-day)$")
+    location: Optional[str] = Field(None, max_length=100)
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
+    remarks: Optional[str] = None
+
+
+class AttendanceResponse(BaseModel):
+    attendance_id: int
+    employee_id: int
+    attendance_date: date
+    status: str
+    location: Optional[str] = None
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
+    remarks: Optional[str] = None
+    recorded_by: Optional[str] = None
+    created_at: datetime
+
+
+# ── Fuzzy Search ──────────────────────────────────────────────
+
+class FuzzySearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=5, le=20)
+
+
+class FuzzySearchResult(BaseModel):
+    employee_id: int
+    employee_name: str
+    employee_mobile: str
+    designation: str
+    status: str
+    similarity: float
+    bkash_number: Optional[str] = None
+    nagad_number: Optional[str] = None
+
+
+# ── Command Parser ────────────────────────────────────────────
+
+class AdminCommandRequest(BaseModel):
+    """Unified admin command from WhatsApp."""
+    sender_number: str
+    message_body: str
+
+
+class AdminCommandResponse(BaseModel):
+    command_type: str  # search/pay/add_employee/attendance/salary/info
+    result: dict
+    message: str
+    requires_confirmation: bool = False
+
+
+# ── Accountant Payment Draft ──────────────────────────────────
+
+class PaymentDraftRequest(BaseModel):
+    employee_id: int
+    amount: Decimal = Field(..., gt=0)
+    payment_method: str = Field(..., pattern=r"^(Bkash|Nagad|Rocket|Cash|Bank)$")
+    transaction_type: str = Field(default="Advance", pattern=r"^(Advance|Food|Conveyance|Salary|Deduction|Other)$")
+
+
+class PaymentDraftResponse(BaseModel):
+    draft_message: str  # "ID: 01633083171 Nirob 01873419128(B) Tk. 500/-"
+    employee: dict
+    ready_to_send: bool = True
+
+
+# ── Employee Self-Service ─────────────────────────────────────
+
+class EmployeeRequestCreate(BaseModel):
+    employee_id: int
+    request_type: str = Field(..., pattern=r"^(salary_query|advance_request|info_request)$")
+    message_body: Optional[str] = None
+    sender_number: str
+
+
+class EmployeeRequestResponse(BaseModel):
+    request_id: int
+    employee_id: int
+    request_type: str
+    status: str
+    response_text: Optional[str] = None
+    delay_hours: int = 0
+    created_at: datetime

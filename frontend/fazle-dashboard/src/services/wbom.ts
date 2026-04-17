@@ -12,6 +12,10 @@ export interface WbomEmployee {
   bank_account?: string;
   emergency_contact?: string;
   address?: string;
+  bkash_number?: string;
+  nagad_number?: string;
+  basic_salary?: number;
+  nid_number?: string;
   created_at: string;
   updated_at: string;
   // detail fields (from /detail endpoint)
@@ -50,6 +54,13 @@ export interface WbomProgram {
   completion_time?: string;
   remarks?: string;
   created_at?: string;
+  start_date?: string;
+  end_date?: string;
+  end_shift?: string;
+  release_point?: string;
+  day_count?: number;
+  conveyance?: number;
+  capacity?: string;
   // joined fields
   employee_name?: string;
   employee_mobile?: string;
@@ -107,6 +118,76 @@ export interface FullSearchResult {
 
 export interface CountResult {
   total: number;
+}
+
+// ── New types for payroll automation ─────────────────────────
+
+export interface WbomSalaryRecord {
+  salary_id: number;
+  employee_id: number;
+  month: number;
+  year: number;
+  basic_salary?: number;
+  total_programs: number;
+  program_allowance?: number;
+  other_allowance?: number;
+  total_advances?: number;
+  total_deductions?: number;
+  net_salary?: number;
+  status: string;
+  remarks?: string;
+  employee_name?: string;
+  designation?: string;
+}
+
+export interface WbomAttendance {
+  attendance_id: number;
+  employee_id: number;
+  attendance_date: string;
+  status: string;
+  location?: string;
+  check_in_time?: string;
+  check_out_time?: string;
+  remarks?: string;
+  recorded_by?: string;
+  created_at: string;
+  employee_name?: string;
+  designation?: string;
+  employee_mobile?: string;
+}
+
+export interface WbomEmployeeRequest {
+  request_id: number;
+  employee_id: number;
+  request_type: string;
+  message_body?: string;
+  sender_number?: string;
+  status: string;
+  response_text?: string;
+  delay_hours: number;
+  created_at: string;
+  responded_at?: string;
+  employee_name?: string;
+  designation?: string;
+  employee_mobile?: string;
+}
+
+export interface AdminCommandResult {
+  command_type: string;
+  result: Record<string, unknown>;
+  message: string;
+  requires_confirmation: boolean;
+}
+
+export interface FuzzySearchResult {
+  employee_id: number;
+  employee_name: string;
+  employee_mobile: string;
+  designation: string;
+  status: string;
+  similarity: number;
+  bkash_number?: string;
+  nagad_number?: string;
 }
 
 // The WBOM API base path (proxied through Next.js rewrite → nginx → WBOM:9900)
@@ -217,4 +298,53 @@ export const wbomService = {
   },
   quickSearch: (q: string, limit = 20) =>
     apiGet<unknown[]>(`${W}/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+  // ── Fuzzy Search ──
+  fuzzySearch: (q: string, limit = 5) =>
+    apiGet<FuzzySearchResult[]>(`${W}/search/fuzzy?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+  // ── Salary ──
+  generateSalary: (data: { employee_id: number; month: number; year: number; basic_salary: number; program_allowance?: number; other_allowance?: number; remarks?: string }) =>
+    apiPost<WbomSalaryRecord>(`${W}/salary/generate`, data),
+  getSalarySummary: (month: number, year: number) =>
+    apiGet<{ month: number; year: number; records: WbomSalaryRecord[]; total_payable: number }>(`${W}/salary/summary?month=${month}&year=${year}`),
+  markSalaryPaid: (salaryId: number) =>
+    apiPost<{ paid: boolean }>(`${W}/salary/mark-paid/${salaryId}`, {}),
+
+  // ── Attendance ──
+  recordAttendance: (data: { employee_id: number; attendance_date: string; status: string; location?: string; remarks?: string; recorded_by?: string }) =>
+    apiPost<{ action: string; attendance_id: number }>(`${W}/attendance/`, data),
+  bulkAttendance: (status: string, date?: string, recorded_by?: string) => {
+    const q = new URLSearchParams({ status });
+    if (date) q.set('attendance_date', date);
+    if (recorded_by) q.set('recorded_by', recorded_by);
+    return apiPost<{ marked: number; skipped: number; date: string }>(`${W}/attendance/bulk?${q.toString()}`, {});
+  },
+  getAttendanceReport: (params?: { attendance_date?: string; employee_id?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.attendance_date) q.set('attendance_date', params.attendance_date);
+    if (params?.employee_id) q.set('employee_id', String(params.employee_id));
+    const qs = q.toString();
+    return apiGet<WbomAttendance[]>(`${W}/attendance/report${qs ? '?' + qs : ''}`);
+  },
+  getMonthlyAttendanceSummary: (employeeId: number, month: number, year: number) =>
+    apiGet<Record<string, number>>(`${W}/attendance/monthly-summary/${employeeId}?month=${month}&year=${year}`),
+
+  // ── Admin Commands ──
+  sendAdminCommand: (sender_number: string, message_body: string) =>
+    apiPost<AdminCommandResult>(`${W}/admin/command`, { sender_number, message_body }),
+  createPaymentDraft: (data: { employee_id: number; amount: number; payment_method: string; transaction_type?: string }) =>
+    apiPost<{ draft_message: string; employee: Record<string, unknown>; ready_to_send: boolean }>(`${W}/admin/payment-draft`, data),
+  getSalaryDrafts: (month: number, year: number) =>
+    apiGet<{ employee_id: number; employee_name: string; net_salary: number; draft_message: string }[]>(`${W}/admin/salary-drafts?month=${month}&year=${year}`),
+  getDailyPaymentSummary: (date?: string) => {
+    const q = date ? `?target_date=${date}` : '';
+    return apiGet<{ date: string; transactions: unknown[]; total: number; by_type: Record<string, number> }>(`${W}/admin/daily-summary${q}`);
+  },
+
+  // ── Employee Self-Service ──
+  getPendingRequests: (limit = 50) =>
+    apiGet<WbomEmployeeRequest[]>(`${W}/self-service/requests?limit=${limit}`),
+  respondToRequest: (requestId: number, response_text: string, status = 'Responded') =>
+    apiPost<{ success: boolean }>(`${W}/self-service/requests/${requestId}/respond?response_text=${encodeURIComponent(response_text)}&status=${status}`, {}),
 };

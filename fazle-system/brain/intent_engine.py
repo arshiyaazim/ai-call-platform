@@ -1133,6 +1133,39 @@ def _match_intent(norm: str) -> Optional[dict]:
     return best
 
 
+def _match_multi_intent(norm: str, max_intents: int = 4) -> list[dict]:
+    """Match ALL intents in a message for multi-question handling.
+
+    Returns up to max_intents matches, sorted by priority (highest first).
+    Skips generic (priority -1) intents if specific ones are found.
+    """
+    matches: list[tuple[int, int, dict]] = []  # (priority, index, intent)
+    for idx, intent in enumerate(INTENTS):
+        pri = intent.get("priority", 0)
+        for condition in intent["conditions"]:
+            if all(word in norm for word in condition):
+                matches.append((pri, idx, intent))
+                break
+    if not matches:
+        return []
+    # Sort by priority descending, then by position in INTENTS
+    matches.sort(key=lambda x: (-x[0], x[1]))
+    # If we have specific intents (pri >= 0), drop generic ones (pri < 0)
+    has_specific = any(m[0] >= 0 for m in matches)
+    if has_specific:
+        matches = [m for m in matches if m[0] >= 0]
+    # Deduplicate by intent name
+    seen: set[str] = set()
+    result: list[dict] = []
+    for _, _, intent in matches:
+        if intent["name"] not in seen:
+            seen.add(intent["name"])
+            result.append(intent)
+            if len(result) >= max_intents:
+                break
+    return result
+
+
 # ═══════════════════════════════════════════════════════════
 # Step 8: Smart Fallback — find 1-2 close topics and ask
 # ═══════════════════════════════════════════════════════════
@@ -1259,7 +1292,29 @@ def process_social_intent(message: str, conv_id: str) -> str:
         return _STATEMENT_REPLY
 
     # ── Step 2-3: Intent matching (for question/request/unknown) ──
-    intent = _match_intent(norm)
+    # Try multi-intent first for complex messages
+    multi = _match_multi_intent(norm)
+
+    if len(multi) >= 2:
+        # Multi-intent: combine short replies for all matched intents
+        intent_names = [i["name"] for i in multi]
+        parts: list[str] = []
+        for intent in multi:
+            parts.append(intent["reply"])
+        combined = "\n\n".join(parts)
+        # Store last intent as the first (highest priority) for state tracking
+        first_intent = multi[0]
+        _set_state(
+            conv_id,
+            last_intent=first_intent["name"],
+            pending_detail=None,
+            pending_full_detail=None,
+            suggested_intent=None,
+        )
+        logger.info(f"Intent result: multi-intent {intent_names}")
+        return combined
+
+    intent = multi[0] if multi else None
 
     if intent:
         intent_name = intent["name"]

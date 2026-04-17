@@ -178,6 +178,8 @@ class EscortOrderProcessor:
             "shift": fields.get("shift", shift),
             "contact_id": contact_id,
             "status": "Assigned",
+            "start_date": fields.get("start_date", date.today().isoformat()),
+            "capacity": fields.get("capacity"),
         }
 
         program = insert_row("wbom_escort_programs", program_data)
@@ -186,6 +188,54 @@ class EscortOrderProcessor:
             program["program_id"], program_data["mother_vessel"],
         )
         return program
+
+    def release_program(
+        self,
+        program_id: int,
+        release_point: Optional[str] = None,
+        end_date: Optional[date] = None,
+        end_shift: Optional[str] = None,
+        conveyance: float = 0,
+    ) -> dict:
+        """Release/complete an escort program with lifecycle fields.
+
+        Calculates day_count from start_date to end_date, records release_point,
+        and sets conveyance. Marks program as 'Completed'.
+        """
+        program = get_row("wbom_escort_programs", "program_id", program_id)
+        if not program:
+            return {"error": f"Program {program_id} not found"}
+
+        if program["status"] == "Completed":
+            return {"error": f"Program {program_id} already completed"}
+
+        if end_date is None:
+            end_date = date.today()
+        if end_shift is None:
+            end_shift = self._cfg.get_shift(datetime.now().hour)
+
+        # Calculate day_count
+        start = program.get("start_date") or program.get("program_date")
+        if isinstance(start, str):
+            start = date.fromisoformat(start)
+        day_count = max(1, (end_date - start).days + 1) if start else 1
+
+        update_data = {
+            "status": "Completed",
+            "completion_time": datetime.utcnow().isoformat(),
+            "end_date": end_date.isoformat(),
+            "end_shift": end_shift,
+            "release_point": release_point,
+            "day_count": day_count,
+            "conveyance": conveyance,
+        }
+
+        updated = update_row("wbom_escort_programs", "program_id", program_id, update_data)
+        logger.info(
+            "Released program %s: %d days, release_point=%s, conveyance=%.0f",
+            program_id, day_count, release_point, conveyance,
+        )
+        return updated
 
     def log_template_generation(
         self,

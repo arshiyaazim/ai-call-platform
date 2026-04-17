@@ -7,7 +7,8 @@ from fastapi import APIRouter, Query
 from typing import Optional
 
 from database import execute_query
-from models import AdvancedSearchRequest, SearchResult
+from models import AdvancedSearchRequest, SearchResult, FuzzySearchRequest
+from services.fuzzy_search import fuzzy_search_employees
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -189,3 +190,17 @@ def advanced_search(req: AdvancedSearchRequest):
 def quick_search(q: str = Query(..., min_length=1), limit: int = Query(20, le=100)):
     req = AdvancedSearchRequest(query=q, limit=limit)
     return advanced_search(req)
+
+
+# ── Fuzzy employee search ─────────────────────────────────────
+
+@router.get("/fuzzy")
+def fuzzy_search(q: str = Query(..., min_length=1), limit: int = Query(5, le=20)):
+    """Fuzzy search employees by name using trigram similarity."""
+    return fuzzy_search_employees(q, limit=limit)
+
+
+@router.post("/fuzzy")
+def fuzzy_search_post(req: FuzzySearchRequest):
+    """Fuzzy search employees by name (POST variant)."""
+    return fuzzy_search_employees(req.query, limit=req.limit)
