@@ -6,7 +6,7 @@
 import logging
 from datetime import datetime
 
-from database import execute_query, insert_record
+from database import execute_query, insert_row
 
 logger = logging.getLogger("wbom.self_service")
 
@@ -157,7 +157,7 @@ def _handle_program_query(employee: dict) -> dict:
 def _log_request(employee_id: int, request_type: str, message_body: str, sender_number: str):
     """Log employee request to the database."""
     try:
-        insert_record("wbom_employee_requests", {
+        insert_row("wbom_employee_requests", {
             "employee_id": employee_id,
             "request_type": request_type,
             "message_body": message_body,

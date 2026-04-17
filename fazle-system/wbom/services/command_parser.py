@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from database import execute_query, insert_record
+from database import execute_query, insert_row
 from services.fuzzy_search import fuzzy_search_employees, find_employee_fuzzy
 
 logger = logging.getLogger("wbom.command_parser")

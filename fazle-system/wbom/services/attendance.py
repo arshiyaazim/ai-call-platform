@@ -5,7 +5,7 @@
 import logging
 from datetime import date, datetime
 
-from database import execute_query, insert_record
+from database import execute_query, insert_row
 
 logger = logging.getLogger("wbom.attendance")
 
@@ -49,7 +49,7 @@ def record_attendance(employee_id: int, attendance_date: date, status: str = "Pr
         logger.info("Updated attendance %s for employee %s", existing[0]["attendance_id"], employee_id)
         return {"action": "updated", "attendance_id": existing[0]["attendance_id"]}
     else:
-        record = insert_record("wbom_attendance", {
+        record = insert_row("wbom_attendance", {
             "employee_id": employee_id,
             "attendance_date": attendance_date,
             "status": status,
