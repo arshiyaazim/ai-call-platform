@@ -142,6 +142,10 @@ async def upload_csv(table: str, file: UploadFile = File(...)):
                         "data": {k: v for k, v in raw_row.items() if v and v.strip()},
                     })
                     continue
+                if cleaned is None:
+                    # Silently skip rows with no escort_mobile (no employee data)
+                    skipped += 1
+                    continue
 
             insert_row(table, cleaned)
             inserted += 1
@@ -251,10 +255,22 @@ def _to_number(val: str, dtype: str):
 
 
 def _to_date(val: str) -> Optional[str]:
-    """Try common date formats and return ISO date string."""
+    """Try common date formats and return ISO date string.
+    Handles 2-digit years (DD.MM.YY, DD-MM-YY) by expanding to 4-digit.
+    """
+    val = val.strip()
+    if not val:
+        return None
+    # Expand 2-digit year → 4-digit (e.g. 18.01.26 → 18.01.2026)
+    for sep in (".", "-", "/"):
+        parts = val.split(sep)
+        if len(parts) == 3 and len(parts[2]) == 2:
+            parts[2] = "20" + parts[2]
+            val = sep.join(parts)
+            break
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d.%m.%Y"):
         try:
-            return datetime.strptime(val.strip(), fmt).date().isoformat()
+            return datetime.strptime(val, fmt).date().isoformat()
         except ValueError:
             continue
     return val  # return as-is and let DB handle it
@@ -330,11 +346,14 @@ def _handle_escort_employee(cleaned: dict) -> tuple[dict | None, str | None]:
     """
     escort_mobile = cleaned.get("escort_mobile")
 
-    # ── Default shift to 'D' if missing ──
-    if not cleaned.get("shift") or str(cleaned.get("shift", "")).strip() in ("", "0"):
-        cleaned["shift"] = "D"
-    if not cleaned.get("end_shift") or str(cleaned.get("end_shift", "")).strip() in ("", "0"):
-        cleaned["end_shift"] = cleaned["shift"]
+    # ── Map shift words → single char: Day→D, Night→N ──
+    _SHIFT_MAP = {"day": "D", "night": "N", "d": "D", "n": "N"}
+    raw_shift = str(cleaned.get("shift", "")).strip().lower()
+    raw_end_shift = str(cleaned.get("end_shift", "")).strip().lower()
+
+    # Default: shift (start) → N (Night), end_shift → D (Day)
+    cleaned["shift"] = _SHIFT_MAP.get(raw_shift, "N") if raw_shift and raw_shift != "0" else "N"
+    cleaned["end_shift"] = _SHIFT_MAP.get(raw_end_shift, "D") if raw_end_shift and raw_end_shift != "0" else "D"
 
     # If escort_mobile is provided and non-empty, it MUST match an employee
     if escort_mobile:
@@ -349,8 +368,11 @@ def _handle_escort_employee(cleaned: dict) -> tuple[dict | None, str | None]:
             else:
                 return None, f"escort_mobile '{escort_mobile}' not found in employees"
         else:
-            cleaned.pop("escort_mobile", None)
-    # If escort_mobile is empty/absent, no FK to set (both stay NULL)
+            # Mobile was whitespace-only or "0" — treat as missing
+            return None, None
+    # If escort_mobile is empty/absent, skip row entirely (no employee data)
+    else:
+        return None, None
 
     # ── Dedup check: (program_date, lighter_vessel, escort_mobile) ──
     p_date = cleaned.get("program_date")
@@ -417,10 +439,17 @@ def _lookup_conveyance(place: str) -> int | None:
 
 def _calc_conveyance(cleaned: dict) -> float:
     """Auto-calculate conveyance from destination or release_point."""
-    # If conveyance already explicitly provided and > 0, keep it
+    # If conveyance already explicitly provided and is a valid number > 0, keep it
     existing = cleaned.get("conveyance")
-    if existing and float(existing) > 0:
-        return float(existing)
+    if existing:
+        try:
+            val = float(existing)
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            pass  # #REF!, "Mongla", "Day Labor" etc — ignore, auto-calc below
+    # Clear invalid conveyance so it doesn't persist in the row
+    cleaned.pop("conveyance", None)
 
     # Try release_point first, then destination
     for field in ("release_point", "destination"):
