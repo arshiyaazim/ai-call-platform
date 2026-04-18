@@ -117,6 +117,17 @@ def full_search(
             emp["total_amount"] = sum(
                 float(t.get("amount", 0)) for t in emp["transactions"]
             )
+            emp["total_cash"] = emp["total_amount"]
+            emp["total_day_count"] = sum(
+                float(p.get("day_count", 0) or 0) for p in emp["programs"]
+                if p.get("status") in ("Complete", "Completed", "Running")
+            )
+            emp["total_conveyance"] = sum(
+                float(p.get("conveyance", 0) or 0) for p in emp["programs"]
+                if p.get("status") in ("Complete", "Completed", "Running")
+            )
+            emp["total_salary"] = emp["total_day_count"] * 400 + emp["total_conveyance"]
+            emp["net_payable"] = emp["total_salary"] - emp["total_cash"]
         result["employees"] = employees
 
     # ── Vessel search (mother or lighter) → show all related programs ──

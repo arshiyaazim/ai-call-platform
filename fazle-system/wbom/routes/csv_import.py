@@ -319,12 +319,22 @@ def _handle_transaction_employee(cleaned: dict) -> tuple[dict, Optional[dict]]:
 
 def _handle_escort_employee(cleaned: dict) -> tuple[dict | None, str | None]:
     """For escort program CSV imports:
+    - Dedup: skip row if (program_date, lighter_vessel, escort_mobile) already exists
     - Resolve escort_mobile to escort_employee_id
     - SKIP row if escort_mobile doesn't match any employee
     - Auto-derive status from end_date (date→Complete, blank/0→Running)
+    - Default shift to 'D' if missing
+    - Auto-calculate day_count from start_date/end_date + shifts
+    - Auto-calculate conveyance from destination/release_point
     Returns (cleaned_row, failure_reason). If failure_reason is set, row is skipped.
     """
     escort_mobile = cleaned.get("escort_mobile")
+
+    # ── Default shift to 'D' if missing ──
+    if not cleaned.get("shift") or str(cleaned.get("shift", "")).strip() in ("", "0"):
+        cleaned["shift"] = "D"
+    if not cleaned.get("end_shift") or str(cleaned.get("end_shift", "")).strip() in ("", "0"):
+        cleaned["end_shift"] = cleaned["shift"]
 
     # If escort_mobile is provided and non-empty, it MUST match an employee
     if escort_mobile:
@@ -342,13 +352,139 @@ def _handle_escort_employee(cleaned: dict) -> tuple[dict | None, str | None]:
             cleaned.pop("escort_mobile", None)
     # If escort_mobile is empty/absent, no FK to set (both stay NULL)
 
-    # Auto-derive status from end_date
+    # ── Dedup check: (program_date, lighter_vessel, escort_mobile) ──
+    p_date = cleaned.get("program_date")
+    lighter = cleaned.get("lighter_vessel")
+    e_mobile = cleaned.get("escort_mobile") or escort_mobile
+    if p_date and lighter and e_mobile:
+        existing = execute_query(
+            "SELECT program_id FROM wbom_escort_programs "
+            "WHERE program_date = %s AND lighter_vessel = %s AND escort_mobile = %s LIMIT 1",
+            (p_date, lighter, e_mobile),
+        )
+        if existing:
+            return None, f"Duplicate: program_date={p_date}, lighter={lighter}, escort_mobile={e_mobile} already exists"
+
+    # ── Auto-derive status from end_date ──
     end_date = cleaned.get("end_date")
     if end_date and str(end_date).strip() not in ("", "0", "None"):
         cleaned["status"] = "Complete"
     else:
         cleaned["status"] = "Running"
-        # Remove end_date if it was 0 or empty so we don't insert bad value
-        cleaned.pop("end_date", None)
+
+    # ── Auto-calculate day_count from dates + shifts ──
+    cleaned["day_count"] = _calc_day_count(cleaned)
+
+    # ── Auto-calculate conveyance from destination / release_point ──
+    cleaned["conveyance"] = _calc_conveyance(cleaned)
 
     return cleaned, None
+
+
+# ── Conveyance lookup table ──────────────────────────────────
+
+_CONVEYANCE_MAP = {
+    # 0 conveyance
+    "cancel": 0, "ctg": 0, "chattogram": 0, "chittagong": 0,
+    # 600 conveyance
+    "n. gonj": 600, "n.gonj": 600, "narayanganj": 600, "n gonj": 600,
+    "rupshi": 600, "kachpur": 600, "demra": 600,
+    "aricha": 600, "ashugonj": 600, "bhairov": 600, "bhairab": 600,
+    "ghorashal": 600, "nitaigonj": 600,
+    # 800 conveyance
+    "n. bari": 800, "n.bari": 800, "n bari": 800, "narsingdi": 800,
+    "j. kathi": 800, "j.kathi": 800, "jhalokathi": 800, "jhalokati": 800,
+    "barishal": 800, "b. shal": 800, "b.shal": 800, "barisal": 800,
+    # 1000 conveyance
+    "khulna": 1000, "noapara": 1000, "n. para": 1000, "n.para": 1000, "n para": 1000,
+}
+
+
+def _lookup_conveyance(place: str) -> int | None:
+    """Look up conveyance amount for a destination/release_point."""
+    if not place:
+        return None
+    place_lower = place.strip().lower()
+    # Exact match first
+    if place_lower in _CONVEYANCE_MAP:
+        return _CONVEYANCE_MAP[place_lower]
+    # Partial match
+    for key, val in _CONVEYANCE_MAP.items():
+        if key in place_lower or place_lower in key:
+            return val
+    return None
+
+
+def _calc_conveyance(cleaned: dict) -> float:
+    """Auto-calculate conveyance from destination or release_point."""
+    # If conveyance already explicitly provided and > 0, keep it
+    existing = cleaned.get("conveyance")
+    if existing and float(existing) > 0:
+        return float(existing)
+
+    # Try release_point first, then destination
+    for field in ("release_point", "destination"):
+        place = cleaned.get(field)
+        if place:
+            val = _lookup_conveyance(str(place))
+            if val is not None:
+                return float(val)
+    return 0.0
+
+
+def _calc_day_count(cleaned: dict) -> float:
+    """Auto-calculate day_count from start_date, end_date, shift, end_shift.
+    Half-days are preserved as 0.5 increments. If day_count is already set
+    and looks like a valid half-day value (e.g. 2.5), keep it as-is.
+    """
+    # If day_count already explicitly provided and > 0, keep it (preserve half-days)
+    existing = cleaned.get("day_count")
+    if existing:
+        try:
+            val = float(existing)
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            pass
+
+    start_date = cleaned.get("start_date")
+    end_date = cleaned.get("end_date")
+
+    if not start_date or not end_date:
+        return 0.0
+
+    try:
+        from datetime import date as date_type
+        if isinstance(start_date, str):
+            start = date_type.fromisoformat(start_date)
+        else:
+            start = start_date
+        if isinstance(end_date, str):
+            end = date_type.fromisoformat(end_date)
+        else:
+            end = end_date
+
+        delta_days = (end - start).days  # difference in calendar days
+        if delta_days < 0:
+            return 0.0
+
+        # Base: full days between dates (inclusive of start)
+        day_count = float(delta_days)  # end - start gives full-day spans
+
+        # Adjust for half-day shifts
+        shift = str(cleaned.get("shift", "D")).strip().upper()
+        end_shift = str(cleaned.get("end_shift", "D")).strip().upper()
+
+        # If start shift is Night (started mid-day), the first day is a half
+        if shift == "N":
+            day_count += 0.5
+        else:
+            day_count += 1.0  # full first day
+
+        # If end shift is Day (ended mid-day of the last day), subtract half
+        if end_shift == "D" and delta_days > 0:
+            day_count -= 0.5
+
+        return max(day_count, 0.0)
+    except (ValueError, TypeError):
+        return 0.0

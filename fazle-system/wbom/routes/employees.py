@@ -93,6 +93,13 @@ def get_employee_detail(employee_id: int):
     emp["total_programs"] = len(emp["programs"])
     emp["total_transactions"] = len(emp["transactions"])
     emp["total_amount"] = sum(float(t.get("amount", 0)) for t in emp["transactions"])
+    emp["total_cash"] = emp["total_amount"]
+    emp["total_day_count"] = sum(float(p.get("day_count", 0) or 0) for p in emp["programs"]
+                                 if p.get("status") in ("Complete", "Completed", "Running"))
+    emp["total_conveyance"] = sum(float(p.get("conveyance", 0) or 0) for p in emp["programs"]
+                                   if p.get("status") in ("Complete", "Completed", "Running"))
+    emp["total_salary"] = emp["total_day_count"] * 400 + emp["total_conveyance"]
+    emp["net_payable"] = emp["total_salary"] - emp["total_cash"]
     return emp
 
 
@@ -120,26 +127,48 @@ def list_employees(
     limit: int = Query(50, le=200),
     offset: int = 0,
 ):
-    """List employees with optional search, filter, and pagination."""
-    if search:
-        conditions = ["(employee_name ILIKE %s OR employee_mobile ILIKE %s)"]
-        params = [f"%{search}%", f"%{search}%"]
-        if status:
-            conditions.append("status = %s")
-            params.append(status)
-        if designation:
-            conditions.append("designation = %s")
-            params.append(designation)
-        where = f"WHERE {' AND '.join(conditions)}"
-        sql = f"SELECT * FROM wbom_employees {where} ORDER BY employee_name LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-        rows = execute_query(sql, tuple(params))
-        return rows
+    """List employees with optional search, filter, pagination, and aggregated financials."""
+    conditions = []
+    params = []
 
-    filters = {}
+    if search:
+        conditions.append("(e.employee_name ILIKE %s OR e.employee_mobile ILIKE %s)")
+        params.extend([f"%{search}%", f"%{search}%"])
     if status:
-        filters["status"] = status
+        conditions.append("e.status = %s")
+        params.append(status)
     if designation:
-        filters["designation"] = designation
-    rows = list_rows("wbom_employees", filters, "employee_name", limit, offset)
+        conditions.append("e.designation = %s")
+        params.append(designation)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    sql = f"""
+        SELECT e.*,
+            COALESCE(cash.total_cash, 0) AS total_cash,
+            COALESCE(prog.total_day_count, 0) AS total_day_count,
+            COALESCE(prog.total_conveyance, 0) AS total_conveyance,
+            (COALESCE(prog.total_day_count, 0) * 400 + COALESCE(prog.total_conveyance, 0)) AS total_salary,
+            (COALESCE(prog.total_day_count, 0) * 400 + COALESCE(prog.total_conveyance, 0) - COALESCE(cash.total_cash, 0)) AS net_payable
+        FROM wbom_employees e
+        LEFT JOIN (
+            SELECT employee_id,
+                   COALESCE(SUM(amount), 0) AS total_cash
+            FROM wbom_cash_transactions
+            GROUP BY employee_id
+        ) cash ON cash.employee_id = e.employee_id
+        LEFT JOIN (
+            SELECT escort_employee_id,
+                   COALESCE(SUM(day_count), 0) AS total_day_count,
+                   COALESCE(SUM(conveyance), 0) AS total_conveyance
+            FROM wbom_escort_programs
+            WHERE status IN ('Complete', 'Completed', 'Running')
+            GROUP BY escort_employee_id
+        ) prog ON prog.escort_employee_id = e.employee_id
+        {where}
+        ORDER BY e.employee_name
+        LIMIT %s OFFSET %s
+    """
+    params.extend([limit, offset])
+    rows = execute_query(sql, tuple(params))
     return rows

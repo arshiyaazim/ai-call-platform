@@ -24,6 +24,12 @@ export interface WbomEmployee {
   total_programs?: number;
   total_transactions?: number;
   total_amount?: number;
+  // aggregated financial fields
+  total_cash?: number;
+  total_day_count?: number;
+  total_conveyance?: number;
+  total_salary?: number;
+  net_payable?: number;
 }
 
 export interface WbomContact {
@@ -108,6 +114,11 @@ export interface FullSearchResult {
     total_programs?: number;
     total_transactions?: number;
     total_amount?: number;
+    total_cash?: number;
+    total_day_count?: number;
+    total_conveyance?: number;
+    total_salary?: number;
+    net_payable?: number;
   })[];
   vessel_programs: (WbomProgram & {
     employee_name?: string;

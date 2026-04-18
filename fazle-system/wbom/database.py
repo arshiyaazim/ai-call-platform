@@ -75,8 +75,10 @@ def ensure_wbom_tables():
     ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS end_date DATE;
     ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS end_shift VARCHAR(1);
     ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS release_point VARCHAR(100);
-    ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS day_count INT DEFAULT 0;
+    ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS day_count DECIMAL(6,1) DEFAULT 0;
     ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS conveyance DECIMAL(10,2) DEFAULT 0;
+    -- Migrate day_count from INT to DECIMAL(6,1) if needed (for half-days like 2.5)
+    ALTER TABLE wbom_escort_programs ALTER COLUMN day_count TYPE DECIMAL(6,1);
     ALTER TABLE wbom_escort_programs ADD COLUMN IF NOT EXISTS capacity VARCHAR(20);
     CREATE TABLE IF NOT EXISTS wbom_attendance (
         attendance_id SERIAL PRIMARY KEY,

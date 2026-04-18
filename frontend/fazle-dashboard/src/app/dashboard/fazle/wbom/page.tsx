@@ -205,7 +205,7 @@ export default function WbomPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search employees, vessels, mobile numbers..."
-                  className="pl-10 pr-10 h-11 text-base"
+                  className="pl-10 pr-10 h-11 text-base bg-background border shadow-sm rounded-full"
                   value={globalQuery}
                   onChange={(e) => setGlobalQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -363,9 +363,9 @@ function SearchResults({
                         <div className="font-medium">{emp.total_programs ?? 0} programs</div>
                         <div className="text-muted-foreground">{emp.total_transactions ?? 0} txns</div>
                       </div>
-                      {emp.total_amount != null && (
+                      {emp.total_salary != null && (
                         <div className="text-right text-sm font-medium tabular-nums">
-                          à§³{Number(emp.total_amount).toLocaleString()}
+                          Salary: {Number(emp.total_salary).toLocaleString()} | Cash: {Number(emp.total_cash ?? 0).toLocaleString()} | Net: {Number(emp.net_payable ?? 0).toLocaleString()}
                         </div>
                       )}
                       {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -682,7 +682,9 @@ function EmployeesTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'erro
                       <th className="h-10 px-4 text-left text-xs font-medium text-muted-foreground">Mobile</th>
                       <th className="h-10 px-4 text-left text-xs font-medium text-muted-foreground">Designation</th>
                       <th className="h-10 px-4 text-left text-xs font-medium text-muted-foreground">Status</th>
-                      <th className="h-10 px-4 text-left text-xs font-medium text-muted-foreground">Joined</th>
+                      <th className="h-10 px-4 text-right text-xs font-medium text-muted-foreground">Salary</th>
+                      <th className="h-10 px-4 text-right text-xs font-medium text-muted-foreground">Cash Paid</th>
+                      <th className="h-10 px-4 text-right text-xs font-medium text-muted-foreground">Net Payable</th>
                       <th className="h-10 px-4 text-right text-xs font-medium text-muted-foreground">Actions</th>
                     </tr>
                   </thead>
@@ -697,7 +699,11 @@ function EmployeesTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'erro
                         </td>
                         <td className="p-3 text-sm">{emp.designation}</td>
                         <td className="p-3 text-sm"><StatusBadge status={emp.status} /></td>
-                        <td className="p-3 text-sm text-muted-foreground">{fmtDate(emp.joining_date)}</td>
+                        <td className="p-3 text-sm text-right tabular-nums font-medium">{Number(emp.total_salary ?? 0).toLocaleString()}</td>
+                        <td className="p-3 text-sm text-right tabular-nums text-red-600">{Number(emp.total_cash ?? 0).toLocaleString()}</td>
+                        <td className={`p-3 text-sm text-right tabular-nums font-semibold ${(emp.net_payable ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {Number(emp.net_payable ?? 0).toLocaleString()}
+                        </td>
                         <td className="p-3 text-sm text-right">
                           <div className="flex justify-end gap-1">
                             <Button variant="ghost" size="sm" onClick={() => openDetail(emp.employee_id)} title="View detail">
@@ -749,7 +755,10 @@ function EmployeesTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'erro
                 <div className="text-right text-sm">
                   <div><span className="font-medium">{detailData.total_programs ?? 0}</span> programs</div>
                   <div><span className="font-medium">{detailData.total_transactions ?? 0}</span> transactions</div>
-                  <div className="font-semibold text-base mt-1">à§³{Number(detailData.total_amount ?? 0).toLocaleString()}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Days: {Number(detailData.total_day_count ?? 0)} | Conv: {Number(detailData.total_conveyance ?? 0).toLocaleString()}</div>
+                  <div className="font-medium">Salary: {Number(detailData.total_salary ?? 0).toLocaleString()}</div>
+                  <div className="text-red-600">Cash: {Number(detailData.total_cash ?? 0).toLocaleString()}</div>
+                  <div className={`font-semibold text-base mt-1 ${(detailData.net_payable ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>Net: {Number(detailData.net_payable ?? 0).toLocaleString()}</div>
                 </div>
               </div>
 
@@ -1260,7 +1269,7 @@ function DateGroupedTransactions({
               </div>
               <div className="text-sm">
                 <span className="text-muted-foreground">{txs.length} txns &bull; </span>
-                <span className="font-semibold tabular-nums">à§³{dayTotal.toLocaleString()}</span>
+                <span className="font-semibold tabular-nums">{dayTotal.toLocaleString()}</span>
               </div>
             </div>
             <table className="w-full text-sm">
@@ -1270,7 +1279,7 @@ function DateGroupedTransactions({
                     {!compact && (
                       <td className="px-4 py-2 text-muted-foreground">{tx.employee_name || `#${tx.employee_id}`}</td>
                     )}
-                    <td className="px-4 py-2 text-right font-medium tabular-nums">à§³{Number(tx.amount).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-right font-medium tabular-nums">{Number(tx.amount).toLocaleString()}</td>
                     <td className="px-4 py-2"><PaymentMethodBadge method={tx.payment_method} /></td>
                     <td className="px-4 py-2 text-muted-foreground">{tx.transaction_type}</td>
                     <td className="px-4 py-2 text-muted-foreground text-xs max-w-[150px] truncate">{tx.remarks || ''}</td>
@@ -1657,7 +1666,7 @@ function SalaryTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'error')
 
       {totalPayable > 0 && (
         <Card><CardContent className="py-3 flex items-center gap-4">
-          <Badge variant="secondary" className="text-base px-4 py-1">Total Payable: ৳{totalPayable.toLocaleString()}</Badge>
+          <Badge variant="secondary" className="text-base px-4 py-1">Total Payable: {totalPayable.toLocaleString()}</Badge>
           <span className="text-muted-foreground text-sm">{records.length} records</span>
         </CardContent></Card>
       )}
@@ -1678,11 +1687,11 @@ function SalaryTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'error')
             {records.map(r => (
               <tr key={r.salary_id} className="border-t hover:bg-muted/30">
                 <td className="px-3 py-2">{r.employee_name || `#${r.employee_id}`}<br/><span className="text-xs text-muted-foreground">{r.designation}</span></td>
-                <td className="px-3 py-2 text-right">৳{(r.basic_salary || 0).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right">{(r.basic_salary || 0).toLocaleString()}</td>
                 <td className="px-3 py-2 text-right">{r.total_programs}</td>
-                <td className="px-3 py-2 text-right">৳{(r.program_allowance || 0).toLocaleString()}</td>
-                <td className="px-3 py-2 text-right text-red-600">৳{(r.total_advances || 0).toLocaleString()}</td>
-                <td className="px-3 py-2 text-right font-semibold">৳{(r.net_salary || 0).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right">{(r.program_allowance || 0).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right text-red-600">{(r.total_advances || 0).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right font-semibold">{(r.net_salary || 0).toLocaleString()}</td>
                 <td className="px-3 py-2 text-center"><Badge variant={r.status === 'Paid' ? 'default' : 'secondary'}>{r.status}</Badge></td>
                 <td className="px-3 py-2 text-center">
                   {r.status !== 'Paid' && <Button size="sm" variant="outline" onClick={() => markPaid(r.salary_id)}>Mark Paid</Button>}
@@ -1874,10 +1883,10 @@ function AdminTab({ showMsg }: { showMsg: (t: string, tp?: 'success' | 'error') 
           </div>
           {dailySummary && (
             <div className="space-y-2">
-              <Badge variant="secondary" className="text-base px-4 py-1">Total: ৳{dailySummary.total.toLocaleString()}</Badge>
+              <Badge variant="secondary" className="text-base px-4 py-1">Total: {dailySummary.total.toLocaleString()}</Badge>
               <div className="flex gap-2 flex-wrap">
                 {Object.entries(dailySummary.by_type).map(([k, v]) => (
-                  <Badge key={k} variant="outline">{k}: ৳{v.toLocaleString()}</Badge>
+                  <Badge key={k} variant="outline">{k}: {v.toLocaleString()}</Badge>
                 ))}
               </div>
             </div>
