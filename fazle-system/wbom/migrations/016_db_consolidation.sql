@@ -4,8 +4,6 @@
 -- IDEMPOTENT: safe to re-run multiple times
 -- ============================================================
 
-BEGIN;
-
 -- =========================================================
 -- STEP 1: Extend WBOM tables with social-engine columns
 -- =========================================================
@@ -169,7 +167,8 @@ DO $$ BEGIN
         WHERE wct.employee_id = we.employee_id
           AND wct.amount = op.amount
           AND wct.transaction_date = COALESCE(op.payment_date, CURRENT_DATE)
-          AND wct.created_by = COALESCE(op.paid_by, 'migration_ops')
+          AND wct.transaction_type = 'Other'
+          AND wct.payment_method = CASE op.method WHEN 'B' THEN 'Bkash' WHEN 'N' THEN 'Nagad' ELSE 'Cash' END
     );
     RAISE NOTICE 'STEP 4: ops_payments migrated';
 EXCEPTION WHEN undefined_table THEN
@@ -343,4 +342,4 @@ DO $$ BEGIN ALTER TABLE fazle_social_messages RENAME TO _legacy_fazle_social_mes
 DO $$ BEGIN ALTER TABLE fazle_social_contacts RENAME TO _legacy_fazle_social_contacts; EXCEPTION WHEN undefined_table THEN NULL; WHEN duplicate_table THEN NULL; END $$;
 
 
-COMMIT;
+-- end of migration 016
