@@ -37,6 +37,7 @@ from routes.master_routes import router as master_router
 from routes.csv_import import router as csv_import_router
 from routes.workflow import router as workflow_router
 from routes.payroll import router as payroll_router
+from routes.dashboard import router as dashboard_router
 
 # ---- logging ------------------------------------------------
 from structured_log import setup_structured_logging
@@ -140,6 +141,7 @@ app.include_router(master_router, prefix="/api/wbom")
 app.include_router(csv_import_router, prefix="/api/wbom")
 app.include_router(workflow_router, prefix="/api/wbom")
 app.include_router(payroll_router, prefix="/api/wbom")
+app.include_router(dashboard_router, prefix="/api/wbom")
 
 
 # ---- health --------------------------------------------------

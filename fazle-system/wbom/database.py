@@ -193,6 +193,19 @@ def ensure_wbom_tables():
     except Exception as e:
         logger.warning("Migration 019 failed (may already be applied): %s", e)
 
+    # 020: Dashboard & reports indexes (Sprint-2 D0-01/D0-02/D0-03)
+    try:
+        import pathlib
+        _mig_020 = pathlib.Path(__file__).parent / "migrations" / "020_dashboard_indexes.sql"
+        if _mig_020.exists():
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(_mig_020.read_text())
+                conn.commit()
+            logger.info("Applied migration 020_dashboard_indexes")
+    except Exception as e:
+        logger.warning("Migration 020 failed (may already be applied): %s", e)
+
 
 # ── Audit helper ─────────────────────────────────────────────
 

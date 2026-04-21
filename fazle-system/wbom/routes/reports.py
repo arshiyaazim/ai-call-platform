@@ -79,3 +79,48 @@ def billing_report(
         total_amount=total_amount,
         programs=programs,
     )
+
+
+# ── Sprint-2: Daily Activity Report (D0-02) ──────────────────
+
+from models import DailyActivityReport, MonthlyPayrollReport  # noqa: E402
+from services.dashboard import get_daily_activity, get_monthly_payroll_report  # noqa: E402
+
+
+@router.get("/daily", response_model=DailyActivityReport)
+def daily_activity_report(
+    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
+):
+    """Daily operational snapshot: programs, attendance, cash transactions."""
+    from datetime import date as _date
+    if date:
+        ref = _date.fromisoformat(date)
+    else:
+        ref = _date.today()
+    data = get_daily_activity(ref)
+    return DailyActivityReport(
+        date=data["date"],
+        programs=data["programs"],
+        attendance=data["attendance"],
+        transactions=data["transactions"],
+    )
+
+
+# ── Sprint-2: Monthly Payroll Summary (D0-03) ─────────────────
+
+@router.get("/monthly-payroll", response_model=MonthlyPayrollReport)
+def monthly_payroll_report(
+    year:  int = Query(..., ge=2020, le=2099, description="4-digit year"),
+    month: int = Query(..., ge=1,    le=12,   description="Month 1–12"),
+):
+    """Monthly payroll run summary: all employee runs, net totals, cash breakdown."""
+    data = get_monthly_payroll_report(year, month)
+    return MonthlyPayrollReport(
+        period=data["period"],
+        total_runs=data["total_runs"],
+        paid_count=data["paid_count"],
+        total_net_salary=data["total_net_salary"],
+        cash_summary=data["cash_summary"],
+        payroll_runs=data["payroll_runs"],
+    )
+

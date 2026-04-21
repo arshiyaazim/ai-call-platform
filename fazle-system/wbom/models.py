@@ -961,3 +961,73 @@ class PayrollApprovalLogEntry(BaseModel):
     reason: Optional[str] = None
     payload_json: Any
     created_at: datetime
+
+
+# ── Sprint-2: Owner Dashboard (D0-01) ─────────────────────────
+
+class PayrollStatusCounts(BaseModel):
+    draft:    int = 0
+    reviewed: int = 0
+    approved: int = 0
+    locked:   int = 0
+    paid:     int = 0
+
+
+class DashboardAlerts(BaseModel):
+    overdue_payroll: int = 0
+    unpaid_advance:  int = 0
+
+
+class CashFlowSummary(BaseModel):
+    total_advances:   float = 0.0
+    total_deductions: float = 0.0
+    total_salary_out: float = 0.0
+    total_other:      float = 0.0
+
+
+class DashboardPeriod(BaseModel):
+    year:  int
+    month: int
+
+
+class DashboardSummary(BaseModel):
+    ref_date:         str
+    period:           DashboardPeriod
+    active_employees: int
+    programs_today:   int
+    absent_today:     int
+    payroll_status:   PayrollStatusCounts
+    alerts:           DashboardAlerts
+    cash_flow:        CashFlowSummary
+
+
+# ── Sprint-2: Daily Activity Report (D0-02) ───────────────────
+
+class DailyAttendanceSummary(BaseModel):
+    present: int = 0
+    absent:  int = 0
+    records: list[Any] = []
+
+
+class DailyActivityReport(BaseModel):
+    date:         str
+    programs:     list[Any] = []
+    attendance:   DailyAttendanceSummary
+    transactions: list[Any] = []
+
+
+# ── Sprint-2: Monthly Payroll Report (D0-03) ──────────────────
+
+class MonthlyCashSummary(BaseModel):
+    total_advances:   float = 0.0
+    total_deductions: float = 0.0
+    total_salary_out: float = 0.0
+
+
+class MonthlyPayrollReport(BaseModel):
+    period:           DashboardPeriod
+    total_runs:       int
+    paid_count:       int
+    total_net_salary: float
+    cash_summary:     MonthlyCashSummary
+    payroll_runs:     list[Any] = []
