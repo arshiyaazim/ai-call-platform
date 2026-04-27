@@ -234,6 +234,17 @@ sudo systemctl disable docker-user-firewall
 **Locked out of SSH?**
 Contabo provides a VNC console in their dashboard. Use it to run `sudo ufw allow 22/tcp && sudo ufw enable`.
 
+**SSH login fails / root login denied?**
+Root SSH login is disabled by the SSH hardening script. Always login as the deploy user:
+```bash
+ssh azim@5.189.131.48
+```
+If you haven't applied SSH hardening yet, run:
+```bash
+sudo bash scripts/vps/ssh_hardening.sh
+```
+The script requires your SSH public key to be in `/home/azim/.ssh/authorized_keys` **before** disabling password authentication. Use `--dry-run` to preview changes without applying them.
+
 **Docker containers can't reach the internet?**
 The DOCKER-USER DROP rule only targets NEW inbound from non-internal interfaces. If outbound is broken, check the rule order — ESTABLISHED,RELATED must be first.
 

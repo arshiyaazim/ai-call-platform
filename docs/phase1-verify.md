@@ -77,11 +77,11 @@ Expected output: **13 tests passed**, including:
 ### 2.1 Deploy
 
 ```bash
-# SSH to VPS
-ssh root@5.189.131.48
+# SSH to VPS (always use the azim user — root SSH login is disabled)
+ssh azim@5.189.131.48
 
 # Pull latest code
-cd /root/ai-call-platform
+cd ~/ai-call-platform
 git pull origin main
 
 # Generate/verify secrets

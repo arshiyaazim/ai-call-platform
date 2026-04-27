@@ -79,7 +79,7 @@ Default time range: last 3 hours, auto-refresh every 30 s.
 
 ```bash
 # 1. Pull latest changes
-cd /opt/ai-call-platform
+cd ~/ai-call-platform
 git pull
 
 # 2. Reload Prometheus config without downtime
